@@ -1,8 +1,6 @@
-mod enum_variant_meta;
 pub mod label;
 
 pub use ahash::AHasher;
-pub use enum_variant_meta::*;
 pub use instant::{Duration, Instant};
 pub use tracing;
 pub use uuid::Uuid;
