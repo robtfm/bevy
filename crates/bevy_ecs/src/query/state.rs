@@ -11,7 +11,7 @@ use crate::{
 };
 use bevy_tasks::TaskPool;
 use fixedbitset::FixedBitSet;
-use thiserror::Error;
+use std::fmt;
 
 /// Provides scoped access to a [`World`] state according to a given [`WorldQuery`] and query filter.
 pub struct QueryState<Q: WorldQuery, F: WorldQuery = ()>
@@ -732,10 +732,21 @@ where
 }
 
 /// An error that occurs when retrieving a specific [`Entity`]'s query result.
-#[derive(Error, Debug)]
+#[derive(Debug)]
 pub enum QueryEntityError {
-    #[error("The given entity does not have the requested component.")]
     QueryDoesNotMatch,
-    #[error("The requested entity does not exist.")]
     NoSuchEntity,
+}
+
+impl std::error::Error for QueryEntityError {}
+
+impl fmt::Display for QueryEntityError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            QueryEntityError::QueryDoesNotMatch => {
+                write!(f, "The given entity does not have the requested component.")
+            }
+            QueryEntityError::NoSuchEntity => write!(f, "The requested entity does not exist."),
+        }
+    }
 }
