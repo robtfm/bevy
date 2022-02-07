@@ -3,7 +3,6 @@ pub mod label;
 pub use ahash::AHasher;
 pub use instant::{Duration, Instant};
 pub use tracing;
-pub use uuid::Uuid;
 
 use ahash::RandomState;
 use std::{future::Future, pin::Pin};

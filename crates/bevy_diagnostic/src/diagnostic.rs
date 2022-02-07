@@ -1,6 +1,7 @@
 use bevy_log::warn;
-use bevy_utils::{Duration, Instant, StableHashMap, Uuid};
+use bevy_utils::{Duration, Instant, StableHashMap};
 use std::{borrow::Cow, collections::VecDeque};
+use uuid::Uuid;
 
 use crate::MAX_DIAGNOSTIC_NAME_WIDTH;
 

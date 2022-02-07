@@ -1,4 +1,4 @@
-use bevy_utils::Uuid;
+use bevy_reflect::Uuid;
 use std::{ops::Deref, sync::Arc};
 
 /// A [`Texture`] identifier.

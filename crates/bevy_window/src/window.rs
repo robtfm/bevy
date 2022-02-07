@@ -1,6 +1,7 @@
 use bevy_math::{DVec2, IVec2, Vec2};
-use bevy_utils::{tracing::warn, Uuid};
+use bevy_utils::tracing::warn;
 use raw_window_handle::RawWindowHandle;
+use uuid::Uuid;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct WindowId(Uuid);

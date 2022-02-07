@@ -25,6 +25,10 @@ thiserror = "1.0"
 serde = "1"
 smallvec = { version = "1.6", features = ["serde", "union", "const_generics"], optional = true }
 glam = { version = "0.20.0", features = ["serde"], optional = true }
+uuid = { version = "0.8", features = ["v4", "serde"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+uuid = { version = "0.8", features = ["wasm-bindgen"] }
 
 [dev-dependencies]
 ron = "0.7.0"

@@ -7,8 +7,9 @@ use crate::{
 use anyhow::Result;
 use bevy_ecs::system::{Res, ResMut};
 use bevy_log::warn;
+use bevy_reflect::Uuid;
 use bevy_tasks::TaskPool;
-use bevy_utils::{HashMap, Uuid};
+use bevy_utils::HashMap;
 use crossbeam_channel::TryRecvError;
 use parking_lot::{Mutex, RwLock};
 use std::{collections::hash_map::Entry, path::Path, sync::Arc};

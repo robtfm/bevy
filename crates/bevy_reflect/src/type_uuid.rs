@@ -1,5 +1,6 @@
+use uuid::Uuid;
+
 pub use bevy_reflect_derive::TypeUuid;
-pub use bevy_utils::Uuid;
 
 /// A trait for types with a statically associated UUID.
 pub trait TypeUuid {
