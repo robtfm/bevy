@@ -1,34 +1,112 @@
 use std::num::ParseIntError;
 
 use crate::{Reflect, ReflectMut, ReflectRef};
-use thiserror::Error;
 
 /// An error returned from a failed path string query.
-#[derive(Debug, PartialEq, Eq, Error)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum ReflectPathError<'a> {
-    #[error("expected an identifier at the given index")]
-    ExpectedIdent { index: usize },
-    #[error("the current struct doesn't have a field with the given name")]
-    InvalidField { index: usize, field: &'a str },
-    #[error("the current tuple struct doesn't have a field with the given index")]
+    ExpectedIdent {
+        index: usize,
+    },
+    InvalidField {
+        index: usize,
+        field: &'a str,
+    },
     InvalidTupleStructIndex {
         index: usize,
         tuple_struct_index: usize,
     },
-    #[error("the current list doesn't have a value at the given index")]
-    InvalidListIndex { index: usize, list_index: usize },
-    #[error("encountered an unexpected token")]
-    UnexpectedToken { index: usize, token: &'a str },
-    #[error("expected a token, but it wasn't there.")]
-    ExpectedToken { index: usize, token: &'a str },
-    #[error("expected a struct, but found a different reflect value")]
-    ExpectedStruct { index: usize },
-    #[error("expected a list, but found a different reflect value")]
-    ExpectedList { index: usize },
-    #[error("failed to parse a usize")]
-    IndexParseError(#[from] ParseIntError),
-    #[error("failed to downcast to the path result to the given type")]
+    InvalidListIndex {
+        index: usize,
+        list_index: usize,
+    },
+    UnexpectedToken {
+        index: usize,
+        token: &'a str,
+    },
+    ExpectedToken {
+        index: usize,
+        token: &'a str,
+    },
+    ExpectedStruct {
+        index: usize,
+    },
+    ExpectedList {
+        index: usize,
+    },
+    IndexParseError(ParseIntError),
     InvalidDowncast,
+}
+
+impl std::error::Error for ReflectPathError<'_> {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            ReflectPathError::IndexParseError { 0: source, .. } => Some(source),
+
+            ReflectPathError::ExpectedIdent { .. }
+            | ReflectPathError::InvalidField { .. }
+            | ReflectPathError::InvalidTupleStructIndex { .. }
+            | ReflectPathError::InvalidListIndex { .. }
+            | ReflectPathError::UnexpectedToken { .. }
+            | ReflectPathError::ExpectedToken { .. }
+            | ReflectPathError::ExpectedStruct { .. }
+            | ReflectPathError::ExpectedList { .. }
+            | ReflectPathError::InvalidDowncast { .. } => None,
+        }
+    }
+}
+
+impl std::fmt::Display for ReflectPathError<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            ReflectPathError::ExpectedIdent { index: _ } => {
+                write!(f, "expected an identifier at the given index")
+            }
+            ReflectPathError::InvalidField { index: _, field: _ } => {
+                write!(
+                    f,
+                    "the current struct doesn\'t have a field with the given name"
+                )
+            }
+            ReflectPathError::InvalidTupleStructIndex {
+                index: _,
+                tuple_struct_index: _,
+            } => write!(
+                f,
+                "the current tuple struct doesn\'t have a field with the given index"
+            ),
+            ReflectPathError::InvalidListIndex {
+                index: _,
+                list_index: _,
+            } => {
+                write!(
+                    f,
+                    "the current list doesn\'t have a value at the given index"
+                )
+            }
+            ReflectPathError::UnexpectedToken { index: _, token: _ } => {
+                write!(f, "encountered an unexpected token")
+            }
+            ReflectPathError::ExpectedToken { index: _, token: _ } => {
+                write!(f, "expected a token, but it wasn\'t there.")
+            }
+            ReflectPathError::ExpectedStruct { index: _ } => {
+                write!(f, "expected a struct, but found a different reflect value")
+            }
+            ReflectPathError::ExpectedList { index: _ } => {
+                write!(f, "expected a list, but found a different reflect value")
+            }
+            ReflectPathError::IndexParseError(_) => write!(f, "failed to parse a usize"),
+            ReflectPathError::InvalidDowncast => {
+                write!(f, "failed to downcast to the path result to the given type")
+            }
+        }
+    }
+}
+impl From<ParseIntError> for ReflectPathError<'_> {
+    fn from(source: ParseIntError) -> Self {
+        ReflectPathError::IndexParseError(source)
+    }
 }
 
 /// A trait which allows nested values to be retrieved with path strings.

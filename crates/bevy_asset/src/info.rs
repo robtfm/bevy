@@ -1,5 +1,6 @@
 use crate::{path::AssetPath, LabelId};
-use bevy_utils::{HashMap, HashSet, Uuid};
+use bevy_reflect::Uuid;
+use bevy_utils::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 

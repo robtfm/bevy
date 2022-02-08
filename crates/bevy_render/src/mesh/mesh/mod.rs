@@ -7,10 +7,10 @@ use crate::{
     renderer::RenderDevice,
 };
 use bevy_core::cast_slice;
+use bevy_derive::EnumVariantMeta;
 use bevy_ecs::system::{lifetimeless::SRes, SystemParamItem};
 use bevy_math::*;
 use bevy_reflect::TypeUuid;
-use bevy_utils::EnumVariantMeta;
 use std::{borrow::Cow, collections::BTreeMap};
 use wgpu::{
     util::BufferInitDescriptor, BufferUsages, IndexFormat, PrimitiveTopology, VertexFormat,

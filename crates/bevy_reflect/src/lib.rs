@@ -45,6 +45,7 @@ pub use type_uuid::*;
 
 pub use bevy_reflect_derive::*;
 pub use erased_serde;
+pub use uuid::Uuid;
 
 #[cfg(test)]
 #[allow(clippy::blacklisted_name, clippy::approx_constant)]

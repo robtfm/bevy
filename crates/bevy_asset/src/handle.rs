@@ -10,8 +10,7 @@ use crate::{
     Asset, Assets,
 };
 use bevy_ecs::{component::Component, reflect::ReflectComponent};
-use bevy_reflect::{FromReflect, Reflect, ReflectDeserialize};
-use bevy_utils::Uuid;
+use bevy_reflect::{FromReflect, Reflect, ReflectDeserialize, Uuid};
 use crossbeam_channel::{Receiver, Sender};
 use serde::{Deserialize, Serialize};
 

@@ -6,7 +6,7 @@ use crate::{
     renderer::RenderContext,
 };
 use bevy_ecs::world::World;
-use bevy_utils::Uuid;
+use bevy_reflect::Uuid;
 use downcast_rs::{impl_downcast, Downcast};
 use std::{borrow::Cow, fmt::Debug};
 use thiserror::Error;
