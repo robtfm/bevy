@@ -28,6 +28,7 @@ use bevy_render::{
     Extract, RenderApp, RenderStage,
 };
 use bevy_transform::components::GlobalTransform;
+use bevy_utils::HashMap;
 use std::num::NonZeroU64;
 
 #[derive(Default)]
@@ -43,6 +44,8 @@ pub const MESH_VIEW_TYPES_HANDLE: HandleUntyped =
     HandleUntyped::weak_from_u64(Shader::TYPE_UUID, 8140454348013264787);
 pub const MESH_VIEW_BINDINGS_HANDLE: HandleUntyped =
     HandleUntyped::weak_from_u64(Shader::TYPE_UUID, 9076678235888822571);
+pub const MESH_VIEW_USER_BINDINGS_HANDLE: HandleUntyped =
+    HandleUntyped::weak_from_u64(Shader::TYPE_UUID, 4099118610242120002);
 pub const MESH_TYPES_HANDLE: HandleUntyped =
     HandleUntyped::weak_from_u64(Shader::TYPE_UUID, 2506024101911992377);
 pub const MESH_BINDINGS_HANDLE: HandleUntyped =
@@ -53,6 +56,8 @@ pub const MESH_SHADER_HANDLE: HandleUntyped =
     HandleUntyped::weak_from_u64(Shader::TYPE_UUID, 3252377289100772450);
 pub const SKINNING_HANDLE: HandleUntyped =
     HandleUntyped::weak_from_u64(Shader::TYPE_UUID, 13215291596265391738);
+
+const MESH_VIEW_DEFAULT_BINDINGS_COUNT: usize = 9;
 
 impl Plugin for MeshRenderPlugin {
     fn build(&self, app: &mut bevy_app::App) {
@@ -92,10 +97,38 @@ impl Plugin for MeshRenderPlugin {
 
         app.add_plugin(UniformComponentPlugin::<MeshUniform>::default());
 
+        // initialise if required, then manually copy over so they are available for MeshPipeline's FromWorld
+        app.init_resource::<UserViewBindingsSpec>();
+        let user_view_layouts = app.world.resource::<UserViewBindingsSpec>().clone();
+
+        // construct the amalgamated user bindings shader
+        let mut offset = MESH_VIEW_DEFAULT_BINDINGS_COUNT;
+        let mut mesh_view_user_bindings =
+            String::from("#define_import_path bevy_pbr::mesh_view_user_bindings\n\n");
+        for def in &user_view_layouts.binding_shaders {
+            let mut preprocessed_binding_shader = def.shader.clone();
+            for i in 0..def.num_bindings {
+                preprocessed_binding_shader = preprocessed_binding_shader.replace(
+                    format!("@binding({})", i).as_str(),
+                    format!("@binding({})", offset + i).as_str(),
+                );
+            }
+            mesh_view_user_bindings += "\n";
+            mesh_view_user_bindings += &preprocessed_binding_shader;
+            offset += def.num_bindings;
+        }
+        let mut shaders = app.world.resource_mut::<Assets<Shader>>();
+        shaders.set_untracked(
+            MESH_VIEW_USER_BINDINGS_HANDLE,
+            Shader::from_wgsl(mesh_view_user_bindings),
+        );
+
         if let Ok(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app
+                .insert_resource(user_view_layouts)
                 .init_resource::<MeshPipeline>()
                 .init_resource::<SkinnedMeshUniform>()
+                .init_resource::<UserViewBindingsEntries>()
                 .add_system_to_stage(RenderStage::Extract, extract_meshes)
                 .add_system_to_stage(RenderStage::Extract, extract_skinned_meshes)
                 .add_system_to_stage(RenderStage::Prepare, prepare_skinned_meshes)
@@ -248,6 +281,58 @@ pub fn extract_skinned_meshes(
 }
 
 #[derive(Clone)]
+pub struct UserViewBindingsShader {
+    // wgsl, using `BINDING_INDEX + x` binding entries
+    pub shader: String,
+    pub num_bindings: usize,
+}
+
+// entries will be added to the end of the mesh view binding
+// starting from binding 9
+// bevy_pbr::mesh_view_bindings will also need to be updated to match
+#[derive(Default, Clone)]
+pub struct UserViewBindingsSpec {
+    pub layout_entries: Vec<(&'static str, UserViewBindGroupLayoutEntry)>,
+    pub binding_shaders: Vec<UserViewBindingsShader>,
+}
+
+#[derive(Clone)]
+pub struct UserViewBindGroupLayoutEntry {
+    /// Which shader stages can see this binding.
+    pub visibility: ShaderStages,
+    /// The type of the binding
+    pub ty: BindingType,
+}
+
+pub trait GetBinding: Send + Sync {
+    fn get_binding<'a>(&'a self, gpu_images: &'a RenderAssets<Image>) -> BindingResource<'a>;
+}
+
+impl GetBinding for Buffer {
+    fn get_binding(&self, _: &RenderAssets<Image>) -> BindingResource {
+        self.as_entire_binding()
+    }
+}
+
+impl GetBinding for Handle<Image> {
+    fn get_binding<'a>(&'a self, gpu_images: &'a RenderAssets<Image>) -> BindingResource<'a> {
+        let gpu_image = gpu_images.get(self).unwrap(); // use default instead of unwrap
+        BindingResource::TextureView(&gpu_image.texture_view)
+    }
+}
+
+impl GetBinding for Sampler {
+    fn get_binding(&self, _: &RenderAssets<Image>) -> BindingResource {
+        BindingResource::Sampler(self)
+    }
+}
+
+#[derive(Default)]
+pub struct UserViewBindingsEntries {
+    pub entries: HashMap<&'static str, Box<dyn GetBinding>>,
+}
+
+#[derive(Clone)]
 pub struct MeshPipeline {
     pub view_layout: BindGroupLayout,
     pub mesh_layout: BindGroupLayout,
@@ -263,121 +348,140 @@ impl FromWorld for MeshPipeline {
             Res<RenderDevice>,
             Res<DefaultImageSampler>,
             Res<RenderQueue>,
+            Res<UserViewBindingsSpec>,
         )> = SystemState::new(world);
-        let (render_device, default_sampler, render_queue) = system_state.get_mut(world);
+        let (render_device, default_sampler, render_queue, user_entries) =
+            system_state.get_mut(world);
         let clustered_forward_buffer_binding_type = render_device
             .get_supported_read_only_binding_type(CLUSTERED_FORWARD_STORAGE_BUFFER_COUNT);
 
-        let view_layout = render_device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-            entries: &[
-                // View
-                BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Uniform,
-                        has_dynamic_offset: true,
-                        min_binding_size: Some(ViewUniform::min_size()),
-                    },
-                    count: None,
+        let mut entries = vec![
+            // View
+            BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Uniform,
+                    has_dynamic_offset: true,
+                    min_binding_size: Some(ViewUniform::min_size()),
                 },
-                // Lights
-                BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: ShaderStages::FRAGMENT,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Uniform,
-                        has_dynamic_offset: true,
-                        min_binding_size: Some(GpuLights::min_size()),
-                    },
-                    count: None,
+                count: None,
+            },
+            // Lights
+            BindGroupLayoutEntry {
+                binding: 1,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Uniform,
+                    has_dynamic_offset: true,
+                    min_binding_size: Some(GpuLights::min_size()),
                 },
-                // Point Shadow Texture Cube Array
-                BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: ShaderStages::FRAGMENT,
-                    ty: BindingType::Texture {
-                        multisampled: false,
-                        sample_type: TextureSampleType::Depth,
-                        #[cfg(not(feature = "webgl"))]
-                        view_dimension: TextureViewDimension::CubeArray,
-                        #[cfg(feature = "webgl")]
-                        view_dimension: TextureViewDimension::Cube,
-                    },
-                    count: None,
+                count: None,
+            },
+            // Point Shadow Texture Cube Array
+            BindGroupLayoutEntry {
+                binding: 2,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Texture {
+                    multisampled: false,
+                    sample_type: TextureSampleType::Depth,
+                    #[cfg(not(feature = "webgl"))]
+                    view_dimension: TextureViewDimension::CubeArray,
+                    #[cfg(feature = "webgl")]
+                    view_dimension: TextureViewDimension::Cube,
                 },
-                // Point Shadow Texture Array Sampler
-                BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: ShaderStages::FRAGMENT,
-                    ty: BindingType::Sampler(SamplerBindingType::Comparison),
-                    count: None,
+                count: None,
+            },
+            // Point Shadow Texture Array Sampler
+            BindGroupLayoutEntry {
+                binding: 3,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Sampler(SamplerBindingType::Comparison),
+                count: None,
+            },
+            // Directional Shadow Texture Array
+            BindGroupLayoutEntry {
+                binding: 4,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Texture {
+                    multisampled: false,
+                    sample_type: TextureSampleType::Depth,
+                    #[cfg(not(feature = "webgl"))]
+                    view_dimension: TextureViewDimension::D2Array,
+                    #[cfg(feature = "webgl")]
+                    view_dimension: TextureViewDimension::D2,
                 },
-                // Directional Shadow Texture Array
-                BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: ShaderStages::FRAGMENT,
-                    ty: BindingType::Texture {
-                        multisampled: false,
-                        sample_type: TextureSampleType::Depth,
-                        #[cfg(not(feature = "webgl"))]
-                        view_dimension: TextureViewDimension::D2Array,
-                        #[cfg(feature = "webgl")]
-                        view_dimension: TextureViewDimension::D2,
-                    },
-                    count: None,
+                count: None,
+            },
+            // Directional Shadow Texture Array Sampler
+            BindGroupLayoutEntry {
+                binding: 5,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Sampler(SamplerBindingType::Comparison),
+                count: None,
+            },
+            // PointLights
+            BindGroupLayoutEntry {
+                binding: 6,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Buffer {
+                    ty: clustered_forward_buffer_binding_type,
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(GpuPointLights::min_size(
+                        clustered_forward_buffer_binding_type,
+                    )),
                 },
-                // Directional Shadow Texture Array Sampler
-                BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: ShaderStages::FRAGMENT,
-                    ty: BindingType::Sampler(SamplerBindingType::Comparison),
-                    count: None,
-                },
-                // PointLights
-                BindGroupLayoutEntry {
-                    binding: 6,
-                    visibility: ShaderStages::FRAGMENT,
-                    ty: BindingType::Buffer {
-                        ty: clustered_forward_buffer_binding_type,
-                        has_dynamic_offset: false,
-                        min_binding_size: Some(GpuPointLights::min_size(
+                count: None,
+            },
+            // ClusteredLightIndexLists
+            BindGroupLayoutEntry {
+                binding: 7,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Buffer {
+                    ty: clustered_forward_buffer_binding_type,
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(
+                        ViewClusterBindings::min_size_cluster_light_index_lists(
                             clustered_forward_buffer_binding_type,
-                        )),
-                    },
-                    count: None,
-                },
-                // ClusteredLightIndexLists
-                BindGroupLayoutEntry {
-                    binding: 7,
-                    visibility: ShaderStages::FRAGMENT,
-                    ty: BindingType::Buffer {
-                        ty: clustered_forward_buffer_binding_type,
-                        has_dynamic_offset: false,
-                        min_binding_size: Some(
-                            ViewClusterBindings::min_size_cluster_light_index_lists(
-                                clustered_forward_buffer_binding_type,
-                            ),
                         ),
-                    },
-                    count: None,
+                    ),
                 },
-                // ClusterOffsetsAndCounts
-                BindGroupLayoutEntry {
-                    binding: 8,
-                    visibility: ShaderStages::FRAGMENT,
-                    ty: BindingType::Buffer {
-                        ty: clustered_forward_buffer_binding_type,
-                        has_dynamic_offset: false,
-                        min_binding_size: Some(
-                            ViewClusterBindings::min_size_cluster_offsets_and_counts(
-                                clustered_forward_buffer_binding_type,
-                            ),
+                count: None,
+            },
+            // ClusterOffsetsAndCounts
+            BindGroupLayoutEntry {
+                binding: 8,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Buffer {
+                    ty: clustered_forward_buffer_binding_type,
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(
+                        ViewClusterBindings::min_size_cluster_offsets_and_counts(
+                            clustered_forward_buffer_binding_type,
                         ),
-                    },
-                    count: None,
+                    ),
                 },
-            ],
+                count: None,
+            },
+        ];
+
+        assert_eq!(MESH_VIEW_DEFAULT_BINDINGS_COUNT, entries.len());
+
+        entries.extend(
+            user_entries
+                .layout_entries
+                .iter()
+                .enumerate()
+                .map(|(i, (_key, value))| BindGroupLayoutEntry {
+                    binding: (MESH_VIEW_DEFAULT_BINDINGS_COUNT + i) as u32,
+                    visibility: value.visibility,
+                    ty: value.ty,
+                    count: None,
+                }),
+        );
+
+        let view_layout = render_device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            entries: &entries,
             label: Some("mesh_view_layout"),
         });
 
@@ -755,6 +859,9 @@ pub fn queue_mesh_view_bind_groups(
     global_light_meta: Res<GlobalLightMeta>,
     view_uniforms: Res<ViewUniforms>,
     views: Query<(Entity, &ViewShadowBindings, &ViewClusterBindings)>,
+    user_bindings: Res<UserViewBindingsSpec>,
+    mut user_binding_entries: ResMut<UserViewBindingsEntries>,
+    images: Res<RenderAssets<Image>>,
 ) {
     if let (Some(view_binding), Some(light_binding), Some(point_light_binding)) = (
         view_uniforms.uniforms.binding(),
@@ -762,51 +869,71 @@ pub fn queue_mesh_view_bind_groups(
         global_light_meta.gpu_point_lights.binding(),
     ) {
         for (entity, view_shadow_bindings, view_cluster_bindings) in &views {
+            let mut entries = vec![
+                BindGroupEntry {
+                    binding: 0,
+                    resource: view_binding.clone(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: light_binding.clone(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: BindingResource::TextureView(
+                        &view_shadow_bindings.point_light_depth_texture_view,
+                    ),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: BindingResource::Sampler(&shadow_pipeline.point_light_sampler),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: BindingResource::TextureView(
+                        &view_shadow_bindings.directional_light_depth_texture_view,
+                    ),
+                },
+                BindGroupEntry {
+                    binding: 5,
+                    resource: BindingResource::Sampler(&shadow_pipeline.directional_light_sampler),
+                },
+                BindGroupEntry {
+                    binding: 6,
+                    resource: point_light_binding.clone(),
+                },
+                BindGroupEntry {
+                    binding: 7,
+                    resource: view_cluster_bindings.light_index_lists_binding().unwrap(),
+                },
+                BindGroupEntry {
+                    binding: 8,
+                    resource: view_cluster_bindings.offsets_and_counts_binding().unwrap(),
+                },
+            ];
+
+            let user_binding_offset = entries.len();
+
+            // collect binding resources in the layout vec order
+            let user_buffers = user_bindings.layout_entries.iter().map(|(key, _)| {
+                user_binding_entries
+                    .entries
+                    .get(key)
+                    .unwrap()
+                    .get_binding(&images)
+            });
+
+            entries.extend(
+                user_buffers
+                    .enumerate()
+                    .map(|(i, resource)| BindGroupEntry {
+                        binding: (user_binding_offset + i) as u32,
+                        resource,
+                    }),
+            );
+
             let view_bind_group = render_device.create_bind_group(&BindGroupDescriptor {
-                entries: &[
-                    BindGroupEntry {
-                        binding: 0,
-                        resource: view_binding.clone(),
-                    },
-                    BindGroupEntry {
-                        binding: 1,
-                        resource: light_binding.clone(),
-                    },
-                    BindGroupEntry {
-                        binding: 2,
-                        resource: BindingResource::TextureView(
-                            &view_shadow_bindings.point_light_depth_texture_view,
-                        ),
-                    },
-                    BindGroupEntry {
-                        binding: 3,
-                        resource: BindingResource::Sampler(&shadow_pipeline.point_light_sampler),
-                    },
-                    BindGroupEntry {
-                        binding: 4,
-                        resource: BindingResource::TextureView(
-                            &view_shadow_bindings.directional_light_depth_texture_view,
-                        ),
-                    },
-                    BindGroupEntry {
-                        binding: 5,
-                        resource: BindingResource::Sampler(
-                            &shadow_pipeline.directional_light_sampler,
-                        ),
-                    },
-                    BindGroupEntry {
-                        binding: 6,
-                        resource: point_light_binding.clone(),
-                    },
-                    BindGroupEntry {
-                        binding: 7,
-                        resource: view_cluster_bindings.light_index_lists_binding().unwrap(),
-                    },
-                    BindGroupEntry {
-                        binding: 8,
-                        resource: view_cluster_bindings.offsets_and_counts_binding().unwrap(),
-                    },
-                ],
+                entries: &entries,
                 label: Some("mesh_view_bind_group"),
                 layout: &mesh_pipeline.view_layout,
             });
@@ -816,6 +943,8 @@ pub fn queue_mesh_view_bind_groups(
             });
         }
     }
+
+    user_binding_entries.entries.clear();
 }
 
 pub struct SetMeshViewBindGroup<const I: usize>;
