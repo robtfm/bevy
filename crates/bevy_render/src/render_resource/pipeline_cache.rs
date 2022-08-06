@@ -89,6 +89,26 @@ struct ShaderCache {
 }
 
 impl ShaderCache {
+    fn get_processed_shader(
+        &self,
+        handle: &Handle<Shader>,
+        shader_defs: &[String],
+    ) -> Result<ProcessedShader, PipelineCacheError> {
+        let shader = self
+            .shaders
+            .get(handle)
+            .ok_or_else(|| PipelineCacheError::ShaderNotLoaded(handle.clone_weak()))?;
+
+        let processed = self.processor.process(
+            shader,
+            &shader_defs,
+            &self.shaders,
+            &self.import_path_shaders,
+        )?;
+
+        Ok(processed)
+    }
+
     fn get(
         &mut self,
         render_device: &RenderDevice,
@@ -360,6 +380,30 @@ impl PipelineCache {
         });
         self.waiting_pipelines.insert(id.0);
         id
+    }
+
+    pub fn get_processed_vertex_shader(
+        &self,
+        id: CachedRenderPipelineId,
+    ) -> Result<ProcessedShader, PipelineCacheError> {
+        let descriptor = self.get_render_pipeline_descriptor(id);
+        self.shader_cache
+            .get_processed_shader(&descriptor.vertex.shader, &descriptor.vertex.shader_defs)
+    }
+
+    pub fn get_processed_fragment_shader(
+        &self,
+        id: CachedRenderPipelineId,
+    ) -> Result<Option<ProcessedShader>, PipelineCacheError> {
+        let descriptor = self.get_render_pipeline_descriptor(id);
+
+        if let Some(frag) = &descriptor.fragment {
+            self.shader_cache
+                .get_processed_shader(&frag.shader, &frag.shader_defs)
+                .map(Option::Some)
+        } else {
+            Ok(None)
+        }
     }
 
     fn set_shader(&mut self, handle: &Handle<Shader>, shader: &Shader) {
