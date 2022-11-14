@@ -104,8 +104,8 @@ impl<A: RenderAsset> Plugin for RenderAssetPlugin<A> {
 /// Temporarily stores the extracted and removed assets of the current frame.
 #[derive(Resource)]
 pub struct ExtractedAssets<A: RenderAsset> {
-    extracted: Vec<(Handle<A>, A::ExtractedAsset)>,
-    removed: Vec<Handle<A>>,
+    pub extracted: Vec<(Handle<A>, A::ExtractedAsset)>,
+    pub removed: Vec<Handle<A>>,
 }
 
 impl<A: RenderAsset> Default for ExtractedAssets<A> {
