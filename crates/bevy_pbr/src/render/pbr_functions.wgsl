@@ -239,17 +239,13 @@ fn pbr(
     }
 
     // Ambient light (indirect)
-    var indirect_diffuse_light = EnvBRDFApprox(diffuse_color, F_AB(1.0, NdotV)) * lights.ambient_color.rgb;
-    var indirect_specular_light = EnvBRDFApprox(F0, f_ab) * lights.ambient_color.rgb;
+    var indirect_light = ambient_light(in.world_position, in.N, in.V, NdotV, diffuse_color, F0, perceptual_roughness, occlusion);
 
     // Environment map light (indirect)
 #ifdef ENVIRONMENT_MAP
     let environment_light = environment_map_light(perceptual_roughness, roughness, diffuse_color, NdotV, f_ab, in.N, R, F0);
-    indirect_diffuse_light += environment_light.diffuse;
-    indirect_specular_light += environment_light.specular;
+    indirect_light += (environment_light.diffuse * occlusion) + environment_light.specular;
 #endif
-
-    let indirect_light = (indirect_diffuse_light * occlusion) + indirect_specular_light;
 
     let emissive_light = emissive.rgb * output_color.a;
 
