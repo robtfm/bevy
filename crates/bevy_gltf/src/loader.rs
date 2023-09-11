@@ -393,7 +393,8 @@ async fn load_gltf<'a, 'b>(
                 load_context,
                 loader.supported_compressed_formats,
             )
-            .await?;
+            .await;
+            let texture = texture?;
             load_context.set_labeled_asset(&label, LoadedAsset::new(texture));
         }
     } else {
@@ -417,11 +418,16 @@ async fn load_gltf<'a, 'b>(
                 });
             })
             .into_iter()
-            .filter_map(|res| {
-                if let Err(err) = res.as_ref() {
-                    warn!("Error loading glTF texture: {}", err);
-                }
-                res.ok()
+            .map(|(texture, label)| {
+                let texture = match texture {
+                    Ok(t) => t,
+                    Err(e) => {
+                        warn!("Error loading glTF texture: {}", e);
+                        Image::default()
+                    }
+                };
+
+                (texture, label)
             })
             .for_each(|(texture, label)| {
                 load_context.set_labeled_asset(&label, LoadedAsset::new(texture));
@@ -582,7 +588,18 @@ async fn load_texture<'a>(
     linear_textures: &HashSet<usize>,
     load_context: &LoadContext<'a>,
     supported_compressed_formats: CompressedImageFormats,
-) -> Result<(Image, String), GltfError> {
+) -> (Result<Image, GltfError>, String) {
+    let label = texture_label(&gltf_texture);
+    (load_texture_inner(gltf_texture, buffer_data, linear_textures, load_context, supported_compressed_formats).await, label)
+}
+
+async fn load_texture_inner<'a>(
+    gltf_texture: gltf::Texture<'a>,
+    buffer_data: &[Vec<u8>],
+    linear_textures: &HashSet<usize>,
+    load_context: &LoadContext<'a>,
+    supported_compressed_formats: CompressedImageFormats,
+) -> Result<Image, GltfError> {
     let is_srgb = !linear_textures.contains(&gltf_texture.index());
     let mut texture = match gltf_texture.source().source() {
         gltf::image::Source::View { view, mime_type } => {
@@ -624,7 +641,7 @@ async fn load_texture<'a>(
     };
     texture.sampler_descriptor = ImageSampler::Descriptor(texture_sampler(&gltf_texture));
 
-    Ok((texture, texture_label(&gltf_texture)))
+    Ok(texture)
 }
 
 /// Loads a glTF material as a bevy [`StandardMaterial`] and returns it.
@@ -637,46 +654,29 @@ fn load_material(
 
     let pbr = material.pbr_metallic_roughness();
 
+    let texture_handle = |texture: gltf::texture::Texture| -> Handle<Image> {
+        let label = texture_label(&texture);
+        let path = AssetPath::new_ref(load_context.path(), Some(&label));
+        load_context.get_handle(path)
+    };
+
     let color = pbr.base_color_factor();
-    let base_color_texture = pbr.base_color_texture().map(|info| {
-        // TODO: handle info.tex_coord() (the *set* index for the right texcoords)
-        let label = texture_label(&info.texture());
-        let path = AssetPath::new_ref(load_context.path(), Some(&label));
-        load_context.get_handle(path)
-    });
-
-    let normal_map_texture: Option<Handle<Image>> =
-        material.normal_texture().map(|normal_texture| {
-            // TODO: handle normal_texture.scale
-            // TODO: handle normal_texture.tex_coord() (the *set* index for the right texcoords)
-            let label = texture_label(&normal_texture.texture());
-            let path = AssetPath::new_ref(load_context.path(), Some(&label));
-            load_context.get_handle(path)
-        });
-
-    let metallic_roughness_texture = pbr.metallic_roughness_texture().map(|info| {
-        // TODO: handle info.tex_coord() (the *set* index for the right texcoords)
-        let label = texture_label(&info.texture());
-        let path = AssetPath::new_ref(load_context.path(), Some(&label));
-        load_context.get_handle(path)
-    });
-
-    let occlusion_texture = material.occlusion_texture().map(|occlusion_texture| {
-        // TODO: handle occlusion_texture.tex_coord() (the *set* index for the right texcoords)
-        // TODO: handle occlusion_texture.strength() (a scalar multiplier for occlusion strength)
-        let label = texture_label(&occlusion_texture.texture());
-        let path = AssetPath::new_ref(load_context.path(), Some(&label));
-        load_context.get_handle(path)
-    });
-
+    let base_color_texture = pbr
+        .base_color_texture()
+        .map(|t| texture_handle(t.texture()));
+    let normal_map_texture = material
+        .normal_texture()
+        .map(|t| texture_handle(t.texture()));
+    let metallic_roughness_texture = pbr
+        .metallic_roughness_texture()
+        .map(|t| texture_handle(t.texture()));
+    let occlusion_texture = material
+        .occlusion_texture()
+        .map(|t| texture_handle(t.texture()));
     let emissive = material.emissive_factor();
-    let emissive_texture = material.emissive_texture().map(|info| {
-        // TODO: handle occlusion_texture.tex_coord() (the *set* index for the right texcoords)
-        // TODO: handle occlusion_texture.strength() (a scalar multiplier for occlusion strength)
-        let label = texture_label(&info.texture());
-        let path = AssetPath::new_ref(load_context.path(), Some(&label));
-        load_context.get_handle(path)
-    });
+    let emissive_texture = material
+        .emissive_texture()
+        .map(|t| texture_handle(t.texture()));
 
     load_context.set_labeled_asset(
         &material_label,
