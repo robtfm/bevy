@@ -6,7 +6,7 @@ pub mod shape;
 
 pub use mesh::*;
 
-use crate::{prelude::Image, render_asset::RenderAssetPlugin};
+use crate::{render_asset::RenderAssetPlugin, texture::GpuImage};
 use bevy_app::{App, Plugin};
 use bevy_asset::AssetApp;
 use bevy_ecs::entity::Entity;
@@ -21,6 +21,6 @@ impl Plugin for MeshPlugin {
             .register_type::<skinning::SkinnedMesh>()
             .register_type::<Vec<Entity>>()
             // 'Mesh' must be prepared after 'Image' as meshes rely on the morph target image being ready
-            .add_plugins(RenderAssetPlugin::<Mesh, Image>::default());
+            .add_plugins(RenderAssetPlugin::<GpuMesh, GpuImage>::default());
     }
 }

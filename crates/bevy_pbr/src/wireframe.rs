@@ -6,8 +6,11 @@ use bevy_core_pipeline::core_3d::Opaque3d;
 use bevy_ecs::{prelude::*, reflect::ReflectComponent};
 use bevy_reflect::std_traits::ReflectDefault;
 use bevy_reflect::Reflect;
-use bevy_render::extract_component::{ExtractComponent, ExtractComponentPlugin};
 use bevy_render::Render;
+use bevy_render::{
+    extract_component::{ExtractComponent, ExtractComponentPlugin},
+    mesh::GpuMesh,
+};
 use bevy_render::{
     extract_resource::{ExtractResource, ExtractResourcePlugin},
     mesh::{Mesh, MeshVertexBufferLayout},
@@ -109,7 +112,7 @@ impl SpecializedMeshPipeline for WireframePipeline {
 #[allow(clippy::too_many_arguments)]
 fn queue_wireframes(
     opaque_3d_draw_functions: Res<DrawFunctions<Opaque3d>>,
-    render_meshes: Res<RenderAssets<Mesh>>,
+    render_meshes: Res<RenderAssets<GpuMesh>>,
     wireframe_config: Res<WireframeConfig>,
     wireframe_pipeline: Res<WireframePipeline>,
     mut pipelines: ResMut<SpecializedMeshPipelines<WireframePipeline>>,

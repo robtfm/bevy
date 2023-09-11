@@ -8,6 +8,7 @@ use crate::{
     render_asset::{PrepareAssetError, RenderAsset, RenderAssets},
     render_resource::{Buffer, TextureView, VertexBufferLayout},
     renderer::RenderDevice,
+    texture::GpuImage,
 };
 use bevy_asset::{Asset, Handle};
 use bevy_core::cast_slice;
@@ -927,21 +928,21 @@ pub enum GpuBufferInfo {
     NonIndexed,
 }
 
-impl RenderAsset for Mesh {
+impl RenderAsset for GpuMesh {
+    type SourceAsset = Mesh;
     type ExtractedAsset = Mesh;
-    type PreparedAsset = GpuMesh;
-    type Param = (SRes<RenderDevice>, SRes<RenderAssets<Image>>);
+    type Param = (SRes<RenderDevice>, SRes<RenderAssets<GpuImage>>);
 
     /// Clones the mesh.
-    fn extract_asset(&self) -> Self::ExtractedAsset {
-        self.clone()
+    fn extract_asset(source: &Self::SourceAsset) -> Self::ExtractedAsset {
+        source.clone()
     }
 
     /// Converts the extracted mesh a into [`GpuMesh`].
     fn prepare_asset(
         mesh: Self::ExtractedAsset,
         (render_device, images): &mut SystemParamItem<Self::Param>,
-    ) -> Result<Self::PreparedAsset, PrepareAssetError<Self::ExtractedAsset>> {
+    ) -> Result<Self, PrepareAssetError<Self::ExtractedAsset>> {
         let vertex_buffer_data = mesh.get_vertex_buffer_data();
         let vertex_buffer = render_device.create_buffer_with_data(&BufferInitDescriptor {
             usage: BufferUsages::VERTEX,

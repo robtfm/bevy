@@ -19,7 +19,7 @@ use bevy_render::{
         TextureFormat, TextureSampleType, TextureViewDimension, VertexState,
     },
     renderer::RenderDevice,
-    texture::{BevyDefault, Image},
+    texture::{BevyDefault, GpuImage, Image},
     view::{ExtractedView, Msaa, ViewTarget, ViewUniform, ViewUniforms},
     Render, RenderApp, RenderSet,
 };
@@ -211,7 +211,7 @@ fn prepare_skybox_bind_groups(
     mut commands: Commands,
     pipeline: Res<SkyboxPipeline>,
     view_uniforms: Res<ViewUniforms>,
-    images: Res<RenderAssets<Image>>,
+    images: Res<RenderAssets<GpuImage>>,
     render_device: Res<RenderDevice>,
     views: Query<(Entity, &Skybox)>,
 ) {

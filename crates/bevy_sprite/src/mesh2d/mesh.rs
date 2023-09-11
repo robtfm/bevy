@@ -11,7 +11,7 @@ use bevy_reflect::Reflect;
 use bevy_render::{
     extract_component::{ComponentUniforms, DynamicUniformIndex, UniformComponentPlugin},
     globals::{GlobalsBuffer, GlobalsUniform},
-    mesh::{GpuBufferInfo, Mesh, MeshVertexBufferLayout},
+    mesh::{GpuBufferInfo, GpuMesh, Mesh, MeshVertexBufferLayout},
     render_asset::RenderAssets,
     render_phase::{PhaseItem, RenderCommand, RenderCommandResult, TrackedRenderPass},
     render_resource::*,
@@ -260,7 +260,7 @@ impl FromWorld for Mesh2dPipeline {
 impl Mesh2dPipeline {
     pub fn get_image_texture<'a>(
         &'a self,
-        gpu_images: &'a RenderAssets<Image>,
+        gpu_images: &'a RenderAssets<GpuImage>,
         handle_option: &Option<Handle<Image>>,
     ) -> Option<(&'a TextureView, &'a Sampler)> {
         if let Some(handle) = handle_option {
@@ -578,7 +578,7 @@ impl<P: PhaseItem, const I: usize> RenderCommand<P> for SetMesh2dBindGroup<I> {
 
 pub struct DrawMesh2d;
 impl<P: PhaseItem> RenderCommand<P> for DrawMesh2d {
-    type Param = SRes<RenderAssets<Mesh>>;
+    type Param = SRes<RenderAssets<GpuMesh>>;
     type ViewWorldQuery = ();
     type ItemWorldQuery = Read<Mesh2dHandle>;
 

@@ -22,22 +22,21 @@ pub enum PrepareAssetError<E: Send + Sync + 'static> {
 ///
 /// After that in the [`RenderSet::PrepareAssets`](crate::RenderSet::PrepareAssets) step the extracted asset
 /// is transformed into its GPU-representation of type [`RenderAsset::PreparedAsset`].
-pub trait RenderAsset: Asset {
+pub trait RenderAsset: Sized + Send + Sync + 'static {
+    type SourceAsset: Asset + Send + Sync + 'static;
     /// The representation of the asset in the "render world".
     type ExtractedAsset: Send + Sync + 'static;
-    /// The GPU-representation of the asset.
-    type PreparedAsset: Send + Sync + 'static;
     /// Specifies all ECS data required by [`RenderAsset::prepare_asset`].
     /// For convenience use the [`lifetimeless`](bevy_ecs::system::lifetimeless) [`SystemParam`].
     type Param: SystemParam;
     /// Converts the asset into a [`RenderAsset::ExtractedAsset`].
-    fn extract_asset(&self) -> Self::ExtractedAsset;
+    fn extract_asset(source: &Self::SourceAsset) -> Self::ExtractedAsset;
     /// Prepares the `extracted asset` for the GPU by transforming it into
     /// a [`RenderAsset::PreparedAsset`]. Therefore ECS data may be accessed via the `param`.
     fn prepare_asset(
         extracted_asset: Self::ExtractedAsset,
         param: &mut SystemParamItem<Self::Param>,
-    ) -> Result<Self::PreparedAsset, PrepareAssetError<Self::ExtractedAsset>>;
+    ) -> Result<Self, PrepareAssetError<Self::ExtractedAsset>>;
 }
 
 /// This plugin extracts the changed assets from the "app world" into the "render world"
@@ -102,8 +101,8 @@ impl<A: RenderAsset> RenderAssetDependency for A {
 /// Temporarily stores the extracted and removed assets of the current frame.
 #[derive(Resource)]
 pub struct ExtractedAssets<A: RenderAsset> {
-    extracted: Vec<(AssetId<A>, A::ExtractedAsset)>,
-    removed: Vec<AssetId<A>>,
+    extracted: Vec<(AssetId<A::SourceAsset>, A::ExtractedAsset)>,
+    removed: Vec<AssetId<A::SourceAsset>>,
 }
 
 impl<A: RenderAsset> Default for ExtractedAssets<A> {
@@ -118,7 +117,7 @@ impl<A: RenderAsset> Default for ExtractedAssets<A> {
 /// Stores all GPU representations ([`RenderAsset::PreparedAssets`](RenderAsset::PreparedAsset))
 /// of [`RenderAssets`](RenderAsset) as long as they exist.
 #[derive(Resource)]
-pub struct RenderAssets<A: RenderAsset>(HashMap<AssetId<A>, A::PreparedAsset>);
+pub struct RenderAssets<A: RenderAsset>(HashMap<AssetId<A::SourceAsset>, A>);
 
 impl<A: RenderAsset> Default for RenderAssets<A> {
     fn default() -> Self {
@@ -127,31 +126,27 @@ impl<A: RenderAsset> Default for RenderAssets<A> {
 }
 
 impl<A: RenderAsset> RenderAssets<A> {
-    pub fn get(&self, id: impl Into<AssetId<A>>) -> Option<&A::PreparedAsset> {
+    pub fn get(&self, id: impl Into<AssetId<A::SourceAsset>>) -> Option<&A> {
         self.0.get(&id.into())
     }
 
-    pub fn get_mut(&mut self, id: impl Into<AssetId<A>>) -> Option<&mut A::PreparedAsset> {
+    pub fn get_mut(&mut self, id: impl Into<AssetId<A::SourceAsset>>) -> Option<&mut A> {
         self.0.get_mut(&id.into())
     }
 
-    pub fn insert(
-        &mut self,
-        id: impl Into<AssetId<A>>,
-        value: A::PreparedAsset,
-    ) -> Option<A::PreparedAsset> {
+    pub fn insert(&mut self, id: impl Into<AssetId<A::SourceAsset>>, value: A) -> Option<A> {
         self.0.insert(id.into(), value)
     }
 
-    pub fn remove(&mut self, id: impl Into<AssetId<A>>) -> Option<A::PreparedAsset> {
+    pub fn remove(&mut self, id: impl Into<AssetId<A::SourceAsset>>) -> Option<A> {
         self.0.remove(&id.into())
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (AssetId<A>, &A::PreparedAsset)> {
+    pub fn iter(&self) -> impl Iterator<Item = (AssetId<A::SourceAsset>, &A)> {
         self.0.iter().map(|(k, v)| (*k, v))
     }
 
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = (AssetId<A>, &mut A::PreparedAsset)> {
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (AssetId<A::SourceAsset>, &mut A)> {
         self.0.iter_mut().map(|(k, v)| (*k, v))
     }
 }
@@ -160,8 +155,8 @@ impl<A: RenderAsset> RenderAssets<A> {
 /// into the "render world".
 fn extract_render_asset<A: RenderAsset>(
     mut commands: Commands,
-    mut events: Extract<EventReader<AssetEvent<A>>>,
-    assets: Extract<Res<Assets<A>>>,
+    mut events: Extract<EventReader<AssetEvent<A::SourceAsset>>>,
+    assets: Extract<Res<Assets<A::SourceAsset>>>,
 ) {
     let mut changed_assets = HashSet::default();
     let mut removed = Vec::new();
@@ -183,11 +178,11 @@ fn extract_render_asset<A: RenderAsset>(
     let mut extracted_assets = Vec::new();
     for id in changed_assets.drain() {
         if let Some(asset) = assets.get(id) {
-            extracted_assets.push((id, asset.extract_asset()));
+            extracted_assets.push((id, A::extract_asset(asset)));
         }
     }
 
-    commands.insert_resource(ExtractedAssets {
+    commands.insert_resource(ExtractedAssets::<A> {
         extracted: extracted_assets,
         removed,
     });
@@ -197,7 +192,7 @@ fn extract_render_asset<A: RenderAsset>(
 /// All assets that should be prepared next frame.
 #[derive(Resource)]
 pub struct PrepareNextFrameAssets<A: RenderAsset> {
-    assets: Vec<(AssetId<A>, A::ExtractedAsset)>,
+    assets: Vec<(AssetId<A::SourceAsset>, A::ExtractedAsset)>,
 }
 
 impl<A: RenderAsset> Default for PrepareNextFrameAssets<A> {

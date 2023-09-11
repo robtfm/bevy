@@ -18,9 +18,9 @@ use bevy_ecs::{
 use bevy_math::{Affine3A, Mat4};
 use bevy_render::{
     globals::{GlobalsBuffer, GlobalsUniform},
-    mesh::MeshVertexBufferLayout,
+    mesh::{GpuMesh, MeshVertexBufferLayout},
     prelude::{Camera, Mesh},
-    render_asset::RenderAssets,
+    render_asset::{prepare_assets, RenderAssets},
     render_phase::{
         AddRenderCommand, DrawFunctions, PhaseItem, RenderCommand, RenderCommandResult,
         RenderPhase, SetItemPipeline, TrackedRenderPass,
@@ -44,9 +44,9 @@ use bevy_transform::prelude::GlobalTransform;
 use bevy_utils::tracing::error;
 
 use crate::{
-    prepare_materials, setup_morph_and_skinning_defs, AlphaMode, DrawMesh, Material,
-    MaterialPipeline, MaterialPipelineKey, MeshLayouts, MeshPipeline, MeshPipelineKey,
-    MeshTransforms, RenderMaterials, SetMaterialBindGroup, SetMeshBindGroup,
+    setup_morph_and_skinning_defs, AlphaMode, DrawMesh, Material, MaterialPipeline,
+    MaterialPipelineKey, MeshLayouts, MeshPipeline, MeshPipelineKey, MeshTransforms,
+    PreparedMaterial, SetMaterialBindGroup, SetMeshBindGroup,
 };
 
 use std::{hash::Hash, marker::PhantomData};
@@ -169,7 +169,7 @@ where
                 Render,
                 queue_prepass_material_meshes::<M>
                     .in_set(RenderSet::QueueMeshes)
-                    .after(prepare_materials::<M>),
+                    .after(prepare_assets::<PreparedMaterial<M>>),
             );
     }
 }
@@ -748,8 +748,8 @@ pub fn queue_prepass_material_meshes<M: Material>(
     mut pipelines: ResMut<SpecializedMeshPipelines<PrepassPipeline<M>>>,
     pipeline_cache: Res<PipelineCache>,
     msaa: Res<Msaa>,
-    render_meshes: Res<RenderAssets<Mesh>>,
-    render_materials: Res<RenderMaterials<M>>,
+    render_meshes: Res<RenderAssets<GpuMesh>>,
+    render_materials: Res<RenderAssets<PreparedMaterial<M>>>,
     material_meshes: Query<(&Handle<M>, &Handle<Mesh>, &MeshTransforms)>,
     mut views: Query<(
         &ExtractedView,
@@ -802,7 +802,7 @@ pub fn queue_prepass_material_meshes<M: Material>(
             };
 
             let (Some(material), Some(mesh)) = (
-                render_materials.get(&material_handle.id()),
+                render_materials.get(material_handle.id()),
                 render_meshes.get(mesh_handle),
             ) else {
                 continue;

@@ -6,8 +6,11 @@ use bevy_asset::{Asset, Handle};
 use bevy_math::Vec4;
 use bevy_reflect::{std_traits::ReflectDefault, Reflect};
 use bevy_render::{
-    color::Color, mesh::MeshVertexBufferLayout, render_asset::RenderAssets, render_resource::*,
-    texture::Image,
+    color::Color,
+    mesh::MeshVertexBufferLayout,
+    render_asset::RenderAssets,
+    render_resource::*,
+    texture::{GpuImage, Image},
 };
 
 /// A material with "standard" properties used in PBR lighting
@@ -442,7 +445,10 @@ pub struct StandardMaterialUniform {
 }
 
 impl AsBindGroupShaderType<StandardMaterialUniform> for StandardMaterial {
-    fn as_bind_group_shader_type(&self, images: &RenderAssets<Image>) -> StandardMaterialUniform {
+    fn as_bind_group_shader_type(
+        &self,
+        images: &RenderAssets<GpuImage>,
+    ) -> StandardMaterialUniform {
         let mut flags = StandardMaterialFlags::NONE;
         if self.base_color_texture.is_some() {
             flags |= StandardMaterialFlags::BASE_COLOR_TEXTURE;

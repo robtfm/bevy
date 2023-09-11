@@ -1,5 +1,5 @@
 use crate::{
-    line_gizmo_vertex_buffer_layouts, DrawLineGizmo, GizmoConfig, LineGizmo,
+    line_gizmo_vertex_buffer_layouts, DrawLineGizmo, GizmoConfig, GpuLineGizmo, LineGizmo,
     LineGizmoUniformBindgroupLayout, SetLineGizmoBindGroup, LINE_SHADER_HANDLE,
 };
 use bevy_app::{App, Plugin};
@@ -38,7 +38,7 @@ impl Plugin for LineGizmo2dPlugin {
                 Render,
                 queue_line_gizmos_2d
                     .in_set(RenderSet::Queue)
-                    .after(prepare_assets::<LineGizmo>),
+                    .after(prepare_assets::<GpuLineGizmo>),
             );
     }
 
@@ -142,7 +142,7 @@ fn queue_line_gizmos_2d(
     msaa: Res<Msaa>,
     config: Res<GizmoConfig>,
     line_gizmos: Query<(Entity, &Handle<LineGizmo>)>,
-    line_gizmo_assets: Res<RenderAssets<LineGizmo>>,
+    line_gizmo_assets: Res<RenderAssets<GpuLineGizmo>>,
     mut views: Query<(
         &ExtractedView,
         &mut RenderPhase<Transparent2d>,

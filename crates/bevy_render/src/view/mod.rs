@@ -8,12 +8,12 @@ pub use window::*;
 use crate::{
     camera::{ExtractedCamera, ManualTextureViews, MipBias, TemporalJitter},
     extract_resource::{ExtractResource, ExtractResourcePlugin},
-    prelude::{Image, Shader},
+    prelude::Shader,
     render_asset::RenderAssets,
     render_phase::ViewRangefinder3d,
     render_resource::{DynamicUniformBuffer, ShaderType, Texture, TextureView},
     renderer::{RenderDevice, RenderQueue},
-    texture::{BevyDefault, CachedTexture, TextureCache},
+    texture::{BevyDefault, CachedTexture, GpuImage, TextureCache},
     Render, RenderApp, RenderSet,
 };
 use bevy_app::{App, Plugin};
@@ -58,7 +58,7 @@ impl Plugin for ViewPlugin {
                     prepare_view_targets
                         .in_set(RenderSet::ManageViews)
                         .after(prepare_windows)
-                        .after(crate::render_asset::prepare_assets::<Image>),
+                        .after(crate::render_asset::prepare_assets::<GpuImage>),
                     prepare_view_uniforms.in_set(RenderSet::PrepareResources),
                 ),
             );
@@ -417,7 +417,7 @@ struct MainTargetTextures {
 fn prepare_view_targets(
     mut commands: Commands,
     windows: Res<ExtractedWindows>,
-    images: Res<RenderAssets<Image>>,
+    images: Res<RenderAssets<GpuImage>>,
     msaa: Res<Msaa>,
     render_device: Res<RenderDevice>,
     mut texture_cache: ResMut<TextureCache>,

@@ -79,7 +79,7 @@ impl Plugin for GizmoPlugin {
 
         app.add_plugins(UniformComponentPlugin::<LineGizmoUniform>::default())
             .init_asset::<LineGizmo>()
-            .add_plugins(RenderAssetPlugin::<LineGizmo>::default())
+            .add_plugins(RenderAssetPlugin::<GpuLineGizmo>::default())
             .init_resource::<LineGizmoHandles>()
             .init_resource::<GizmoConfig>()
             .init_resource::<GizmoStorage>()
@@ -364,21 +364,20 @@ struct GpuLineGizmo {
     strip: bool,
 }
 
-impl RenderAsset for LineGizmo {
+impl RenderAsset for GpuLineGizmo {
+    type SourceAsset = LineGizmo;
     type ExtractedAsset = LineGizmo;
-
-    type PreparedAsset = GpuLineGizmo;
 
     type Param = SRes<RenderDevice>;
 
-    fn extract_asset(&self) -> Self::ExtractedAsset {
-        self.clone()
+    fn extract_asset(source: &Self::SourceAsset) -> Self::ExtractedAsset {
+        source.clone()
     }
 
     fn prepare_asset(
         line_gizmo: Self::ExtractedAsset,
         render_device: &mut SystemParamItem<Self::Param>,
-    ) -> Result<Self::PreparedAsset, PrepareAssetError<Self::ExtractedAsset>> {
+    ) -> Result<Self, PrepareAssetError<Self::ExtractedAsset>> {
         let position_buffer_data = cast_slice(&line_gizmo.positions);
         let position_buffer = render_device.create_buffer_with_data(&BufferInitDescriptor {
             usage: BufferUsages::VERTEX,
@@ -459,7 +458,7 @@ struct DrawLineGizmo;
 impl<P: PhaseItem> RenderCommand<P> for DrawLineGizmo {
     type ViewWorldQuery = ();
     type ItemWorldQuery = Read<Handle<LineGizmo>>;
-    type Param = SRes<RenderAssets<LineGizmo>>;
+    type Param = SRes<RenderAssets<GpuLineGizmo>>;
 
     #[inline]
     fn render<'w>(

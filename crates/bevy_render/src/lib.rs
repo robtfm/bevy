@@ -48,7 +48,7 @@ use wgpu::Instance;
 
 use crate::{
     camera::CameraPlugin,
-    mesh::{morph::MorphPlugin, Mesh, MeshPlugin},
+    mesh::{morph::MorphPlugin, GpuMesh, MeshPlugin},
     render_asset::prepare_assets,
     render_resource::{PipelineCache, Shader, ShaderLoader},
     renderer::{render_system, RenderInstance},
@@ -162,7 +162,7 @@ impl Render {
         schedule.configure_sets(
             QueueMeshes
                 .in_set(RenderSet::Queue)
-                .after(prepare_assets::<Mesh>),
+                .after(prepare_assets::<GpuMesh>),
         );
         schedule.configure_sets(
             (PrepareResources, PrepareResourcesFlush, PrepareBindGroups)

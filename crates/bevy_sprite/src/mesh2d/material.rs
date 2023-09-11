@@ -16,8 +16,7 @@ use bevy_ecs::{
 use bevy_log::error;
 use bevy_render::{
     extract_component::ExtractComponentPlugin,
-    mesh::{Mesh, MeshVertexBufferLayout},
-    prelude::Image,
+    mesh::{GpuMesh, MeshVertexBufferLayout},
     render_asset::{prepare_assets, RenderAssets},
     render_phase::{
         AddRenderCommand, DrawFunctions, PhaseItem, RenderCommand, RenderCommandResult,
@@ -29,7 +28,7 @@ use bevy_render::{
         SpecializedMeshPipelineError, SpecializedMeshPipelines,
     },
     renderer::RenderDevice,
-    texture::FallbackImage,
+    texture::{FallbackImage, GpuImage},
     view::{ExtractedView, InheritedVisibility, Msaa, ViewVisibility, Visibility, VisibleEntities},
     Extract, ExtractSchedule, Render, RenderApp, RenderSet,
 };
@@ -162,7 +161,7 @@ where
                     (
                         prepare_materials_2d::<M>
                             .in_set(RenderSet::PrepareAssets)
-                            .after(prepare_assets::<Image>),
+                            .after(prepare_assets::<GpuImage>),
                         queue_material2d_meshes::<M>
                             .in_set(RenderSet::QueueMeshes)
                             .after(prepare_materials_2d::<M>),
@@ -329,7 +328,7 @@ pub fn queue_material2d_meshes<M: Material2d>(
     mut pipelines: ResMut<SpecializedMeshPipelines<Material2dPipeline<M>>>,
     pipeline_cache: Res<PipelineCache>,
     msaa: Res<Msaa>,
-    render_meshes: Res<RenderAssets<Mesh>>,
+    render_meshes: Res<RenderAssets<GpuMesh>>,
     render_materials: Res<RenderMaterials2d<M>>,
     material2d_meshes: Query<(&Handle<M>, &Mesh2dHandle, &Mesh2dUniform)>,
     mut views: Query<(
@@ -512,7 +511,7 @@ pub fn prepare_materials_2d<M: Material2d>(
     mut extracted_assets: ResMut<ExtractedMaterials2d<M>>,
     mut render_materials: ResMut<RenderMaterials2d<M>>,
     render_device: Res<RenderDevice>,
-    images: Res<RenderAssets<Image>>,
+    images: Res<RenderAssets<GpuImage>>,
     fallback_image: Res<FallbackImage>,
     pipeline: Res<Material2dPipeline<M>>,
 ) {
@@ -559,7 +558,7 @@ pub fn prepare_materials_2d<M: Material2d>(
 fn prepare_material2d<M: Material2d>(
     material: &M,
     render_device: &RenderDevice,
-    images: &RenderAssets<Image>,
+    images: &RenderAssets<GpuImage>,
     fallback_image: &FallbackImage,
     pipeline: &Material2dPipeline<M>,
 ) -> Result<PreparedMaterial2d<M>, AsBindGroupError> {

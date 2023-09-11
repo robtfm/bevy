@@ -57,7 +57,7 @@ use bevy_ecs::prelude::*;
 use bevy_render::{
     camera::CameraUpdateSystem, extract_resource::ExtractResourcePlugin, prelude::Color,
     render_asset::prepare_assets, render_graph::RenderGraph, render_phase::sort_phase_system,
-    render_resource::Shader, texture::Image, view::VisibilitySystems, ExtractSchedule, Render,
+    render_resource::Shader, texture::GpuImage, view::VisibilitySystems, ExtractSchedule, Render,
     RenderApp, RenderSet,
 };
 use bevy_transform::TransformSystem;
@@ -261,7 +261,7 @@ impl Plugin for PbrPlugin {
                 (
                     render::prepare_lights
                         .in_set(RenderSet::ManageViews)
-                        .after(prepare_assets::<Image>),
+                        .after(prepare_assets::<GpuImage>),
                     sort_phase_system::<Shadow>.in_set(RenderSet::PhaseSort),
                     render::prepare_clusters.in_set(RenderSet::PrepareResources),
                 ),
