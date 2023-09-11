@@ -29,7 +29,7 @@ use bevy_render::{
         RenderPhase, SetItemPipeline, TrackedRenderPass,
     },
     render_resource::{
-        AsBindGroup, AsBindGroupError, BindGroup, BindGroupLayout, OwnedBindingResource,
+        AsBindGroup, BindGroup, BindGroupLayout, OwnedBindingResource,
         PipelineCache, RenderPipelineDescriptor, Shader, ShaderRef, SpecializedMeshPipeline,
         SpecializedMeshPipelineError, SpecializedMeshPipelines,
     },
@@ -584,15 +584,14 @@ impl<M: Material> RenderAsset for PreparedMaterial<M> {
         material: Self::ExtractedAsset,
         (render_device, images, fallback_image, pipeline): &mut SystemParamItem<Self::Param>,
     ) -> Result<Self, bevy_render::render_asset::PrepareAssetError<Self::ExtractedAsset>> {
-        let prepared = material.as_bind_group(
-            &pipeline.material_layout,
-            render_device,
-            images,
-            fallback_image,
-        );
-
-        match prepared {
-            Ok(prepared) => Ok(PreparedMaterial {
+        material
+            .as_bind_group(
+                &pipeline.material_layout,
+                render_device,
+                images,
+                fallback_image,
+            )
+            .map(|prepared| Self {
                 bindings: prepared.bindings,
                 bind_group: prepared.bind_group,
                 key: prepared.data,
@@ -600,10 +599,7 @@ impl<M: Material> RenderAsset for PreparedMaterial<M> {
                     alpha_mode: material.alpha_mode(),
                     depth_bias: material.depth_bias(),
                 },
-            }),
-            Err(AsBindGroupError::RetryNextUpdate) => {
-                Err(PrepareAssetError::RetryNextUpdate(material))
-            }
-        }
+            })
+            .map_err(|_| PrepareAssetError::RetryNextUpdate(material))
     }
 }
