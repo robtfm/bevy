@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AssetProvider","AssetReaderError","AssetSourceEvent","AssetWriterError"],"mod":["file","gated","memory","processor_gated"],"struct":["AssetProviders","VecReader"],"trait":["AssetReader","AssetWatcher","AssetWriter","AsyncReadExt","AsyncWriteExt"],"type":["PathStream","Reader","Writer"]};
