@@ -245,7 +245,6 @@ pub fn ui_focus_system(
 
             let node_rect = node.node.logical_rect(node.global_transform);
 
-
             // The mouse position relative to the node
             // (0., 0.) is the top-left corner, (1., 1.) is the bottom-right corner
             // Coordinates are relative to the entire node, not just the visible region.
