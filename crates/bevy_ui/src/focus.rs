@@ -1,4 +1,5 @@
 use crate::{camera_config::UiCameraConfig, CalculatedClip, Node, TargetCamera, UiScale, UiStack};
+use bevy_derive::{Deref, DerefMut};
 use bevy_ecs::{
     change_detection::DetectChangesMut,
     entity::Entity,
@@ -244,11 +245,6 @@ pub fn ui_focus_system(
 
             let node_rect = node.node.logical_rect(node.global_transform);
 
-            // Intersect with the calculated clip rect to find the bounds of the visible region of the node
-            let visible_rect = node
-                .calculated_clip
-                .map(|clip| node_rect.intersect(clip.clip))
-                .unwrap_or(node_rect);
 
             // The mouse position relative to the node
             // (0., 0.) is the top-left corner, (1., 1.) is the bottom-right corner
@@ -259,7 +255,6 @@ pub fn ui_focus_system(
             // If the current cursor position is within the bounds of the node's visible area, consider it for
             // clicking
             let relative_cursor_position_component = RelativeCursorPosition {
-                normalized_visible_node_rect: visible_rect.normalize(node_rect),
                 normalized: relative_cursor_position,
             };
 
