@@ -13,8 +13,8 @@ pub use render_pass::*;
 pub use ui_material_pipeline::*;
 
 use crate::{
-    prelude::UiCameraConfig, BackgroundColor, BorderColor, CalculatedClip, ContentSize, Node,
-    Style, UiImage, UiScale, UiTextureAtlasImage, Val, DefaultUiCamera,
+    prelude::UiCameraConfig, BackgroundColor, BorderColor, CalculatedClip, ContentSize,
+    DefaultUiCamera, Node, Style, UiImage, UiScale, UiTextureAtlasImage, Val,
 };
 use crate::{Outline, TargetCamera};
 

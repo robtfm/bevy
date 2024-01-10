@@ -120,6 +120,7 @@ impl Plugin for UiPlugin {
             .register_type::<RepeatedGridTrack>()
             .register_type::<Style>()
             .register_type::<TargetCamera>()
+            .register_type::<ResizeTarget>()
             .register_type::<UiCameraConfig>()
             .register_type::<UiImage>()
             .register_type::<UiImageSize>()

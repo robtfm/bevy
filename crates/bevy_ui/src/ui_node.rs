@@ -7,7 +7,7 @@ use bevy_ecs::{
     reflect::ReflectComponent,
     system::{Query, SystemParam},
 };
-use bevy_math::{Rect, Vec2};
+use bevy_math::{Rect, UVec2, Vec2};
 use bevy_reflect::prelude::*;
 use bevy_render::{
     camera::{Camera, RenderTarget},
@@ -1760,4 +1760,23 @@ impl<'w, 's> DefaultUiCamera<'w, 's> {
             .max_by_key(|(e, c)| (c.order, *e))
             .map(|(e, _)| e)
     }
+}
+
+#[derive(Clone, Debug, Reflect, PartialEq)]
+pub struct ResizeInfo {
+    pub min_size: UVec2,
+    pub max_size: UVec2,
+    pub viewport_reference_size: UVec2,
+}
+
+#[derive(Clone, Copy, Debug, Reflect, PartialEq)]
+pub enum ResizeType {
+    MinContent,
+    MaxContent,
+}
+
+#[derive(Component, Clone, Debug, Reflect, PartialEq)]
+pub struct ResizeTarget {
+    pub ty: ResizeType,
+    pub info: ResizeInfo,
 }
