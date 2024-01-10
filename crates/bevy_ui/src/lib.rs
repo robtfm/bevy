@@ -54,7 +54,7 @@ use bevy_render::{extract_component::ExtractComponentPlugin, texture::Image, Ren
 use bevy_transform::TransformSystem;
 use stack::ui_stack_system;
 pub use stack::UiStack;
-use update::update_clipping_system;
+use update::{update_clipping_system, update_target_camera_system};
 
 /// The basic plugin for Bevy UI
 #[derive(Default)]
@@ -119,6 +119,7 @@ impl Plugin for UiPlugin {
             .register_type::<RelativeCursorPosition>()
             .register_type::<RepeatedGridTrack>()
             .register_type::<Style>()
+            .register_type::<TargetCamera>()
             .register_type::<UiCameraConfig>()
             .register_type::<UiImage>()
             .register_type::<UiImageSize>()
@@ -175,13 +176,18 @@ impl Plugin for UiPlugin {
 
             system
         });
-        app.add_systems(
-            PostUpdate,
-            widget::update_atlas_content_size_system.before(UiSystem::Layout),
-        );
+
         app.add_systems(
             PostUpdate,
             (
+                (
+                    widget::update_atlas_content_size_system,
+                    update_target_camera_system,
+                )
+                    .before(UiSystem::Layout),
+                apply_deferred
+                    .after(update_target_camera_system)
+                    .before(UiSystem::Layout),
                 ui_layout_system
                     .in_set(UiSystem::Layout)
                     .before(TransformSystem::TransformPropagate),
