@@ -17,8 +17,8 @@ pub use ui_material_pipeline::*;
 
 use crate::graph::{NodeUi, SubGraphUi};
 use crate::{
-    texture_slice::ComputedTextureSlices, BackgroundColor, BorderColor, CalculatedClip,
-    ContentSize, DefaultUiCamera, Node, Outline, Style, TargetCamera, UiImage, UiScale, Val,
+    prelude::UiCameraConfig, BackgroundColor, BorderColor, CalculatedClip, ContentSize,
+    DefaultUiCamera, Node, Style, UiImage, UiScale, UiTextureAtlasImage, Val,
 };
 
 use bevy_app::prelude::*;

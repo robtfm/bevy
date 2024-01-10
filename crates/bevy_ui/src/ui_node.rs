@@ -1,7 +1,7 @@
 use crate::{UiRect, Val};
 use bevy_asset::Handle;
 use bevy_ecs::{prelude::*, system::SystemParam};
-use bevy_math::{Rect, Vec2};
+use bevy_math::{Rect, UVec2, Vec2};
 use bevy_reflect::prelude::*;
 use bevy_render::{
     camera::{Camera, RenderTarget},
@@ -1916,4 +1916,42 @@ impl<'w, 's> DefaultUiCamera<'w, 's> {
                 .map(|(e, _)| e)
         })
     }
+}
+
+#[derive(Clone, Debug, Reflect, PartialEq)]
+pub struct ResizeInfo {
+    pub min_size: UVec2,
+    pub max_size: UVec2,
+    pub viewport_reference_size: UVec2,
+}
+
+#[derive(Clone, Copy, Debug, Reflect, PartialEq)]
+pub enum ResizeType {
+    MinContent,
+    MaxContent,
+}
+
+#[derive(Component, Clone, Debug, Reflect, PartialEq)]
+pub struct ResizeTarget {
+    pub ty: ResizeType,
+    pub info: ResizeInfo,
+}
+
+#[derive(Clone, Debug, Reflect, PartialEq)]
+pub struct ResizeInfo {
+    pub min_size: UVec2,
+    pub max_size: UVec2,
+    pub viewport_reference_size: UVec2,
+}
+
+#[derive(Clone, Copy, Debug, Reflect, PartialEq)]
+pub enum ResizeType {
+    MinContent,
+    MaxContent,
+}
+
+#[derive(Component, Clone, Debug, Reflect, PartialEq)]
+pub struct ResizeTarget {
+    pub ty: ResizeType,
+    pub info: ResizeInfo,
 }
