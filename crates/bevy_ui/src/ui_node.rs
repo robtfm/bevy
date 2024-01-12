@@ -1920,20 +1920,23 @@ impl<'w, 's> DefaultUiCamera<'w, 's> {
 
 #[derive(Clone, Debug, Reflect, PartialEq)]
 pub struct ResizeInfo {
-    pub min_size: UVec2,
-    pub max_size: UVec2,
+    pub min_width: Option<u32>,
+    pub max_width: Option<u32>,
+    pub min_height: Option<u32>,
+    pub max_height: Option<u32>,
     pub viewport_reference_size: UVec2,
 }
 
 #[derive(Clone, Copy, Debug, Reflect, PartialEq)]
-pub enum ResizeType {
+pub enum ResizeAxis {
     MinContent,
     MaxContent,
 }
 
 #[derive(Component, Clone, Debug, Reflect, PartialEq)]
 pub struct ResizeTarget {
-    pub ty: ResizeType,
+    pub width: Option<ResizeAxis>,
+    pub height: Option<ResizeAxis>,
     pub info: ResizeInfo,
 }
 
