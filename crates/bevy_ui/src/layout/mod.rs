@@ -2,8 +2,8 @@ mod convert;
 pub mod debug;
 
 use crate::{
-    ContentSize, DefaultUiCamera, Node, Outline, ResizeTarget, ResizeType, Style, TargetCamera,
-    UiScale,
+    ContentSize, Node, Outline, ResizeTarget, Style, TargetCamera,
+    UiScale, ResizeAxis,
 };
 use bevy_asset::{AssetId, Assets};
 use bevy_ecs::{
@@ -25,7 +25,7 @@ use bevy_render::{
 };
 use bevy_transform::components::Transform;
 use bevy_utils::{default, HashMap, HashSet};
-use bevy_window::{PrimaryWindow, Window, WindowScaleFactorChanged};
+use bevy_window::{PrimaryWindow, Window, WindowScaleFactorChanged, WindowRef};
 use std::fmt;
 use taffy::{style::AvailableSpace, Taffy};
 use thiserror::Error;
@@ -265,8 +265,8 @@ pub enum LayoutError {
 #[allow(clippy::too_many_arguments)]
 pub fn ui_layout_system(
     primary_window: Query<(Entity, &Window), With<PrimaryWindow>>,
-    cameras: Query<(Entity, &Camera, Option<&ResizeTarget>)>,
-    default_ui_camera: DefaultUiCamera,
+    mut cameras: Query<(Entity, &mut Camera, Option<&ResizeTarget>)>,
+    // default_ui_camera: DefaultUiCamera,
     ui_scale: Res<UiScale>,
     mut scale_factor_events: EventReader<WindowScaleFactorChanged>,
     mut resize_events: EventReader<bevy_window::WindowResized>,
@@ -291,7 +291,16 @@ pub fn ui_layout_system(
     }
 
     // If there is only one camera, we use it as default
-    let default_single_camera = default_ui_camera.get();
+    let default_single_camera = cameras
+        .iter()
+        .filter(|(_, c, _)| match c.target {
+            RenderTarget::Window(WindowRef::Primary) => true,
+            RenderTarget::Window(WindowRef::Entity(w)) => primary_window.get(w).is_ok(),
+            _ => false,
+        })
+        .max_by_key(|(e, c, _)| (c.order, *e))
+        .map(|(e, _, _)| e);
+    
     let camera_with_default = |target_camera: Option<&TargetCamera>| {
         target_camera
             .map(TargetCamera::entity)
@@ -366,7 +375,20 @@ pub fn ui_layout_system(
                 || style.is_changed()
             {
                 let physical_size = match &camera.resize_target {
-                    Some(sz) => sz.info.viewport_reference_size,
+                    Some(sz) => {
+                        UVec2::new(
+                            if sz.width.is_some() {
+                                sz.info.viewport_reference_size.x
+                            } else {
+                                camera.size.x
+                            },
+                            if sz.height.is_some() {
+                                sz.info.viewport_reference_size.y
+                            } else {
+                                camera.size.y
+                            },
+                        )
+                    }
                     _ => camera.size,
                 };
                 let layout_context = LayoutContext::new(
@@ -412,14 +434,17 @@ pub fn ui_layout_system(
 
         let reference_size = match &camera.resize_target {
             Some(resize) => {
-                let sz = match resize.ty {
-                    ResizeType::MinContent => taffy::style::AvailableSpace::MinContent,
-                    ResizeType::MaxContent => taffy::style::AvailableSpace::MaxContent,
-                };
-
                 taffy::geometry::Size {
-                    width: sz,
-                    height: sz,
+                    width: match resize.width {
+                        Some(ResizeAxis::MinContent) => taffy::style::AvailableSpace::MinContent,
+                        Some(ResizeAxis::MaxContent) => taffy::style::AvailableSpace::MaxContent,
+                        None => taffy::style::AvailableSpace::Definite(camera.size.x as f32),
+                    },
+                    height: match resize.height {
+                        Some(ResizeAxis::MinContent) => taffy::style::AvailableSpace::MinContent,
+                        Some(ResizeAxis::MaxContent) => taffy::style::AvailableSpace::MaxContent,
+                        None => taffy::style::AvailableSpace::Definite(camera.size.y as f32),
+                    },
                 }
             }
             _ => taffy::geometry::Size {
@@ -434,14 +459,22 @@ pub fn ui_layout_system(
             inverse_target_scale_factor,
         );
         if let Some(resize) = &camera.resize_target {
-            let ui_size = ui_size.clamp(resize.info.min_size, resize.info.max_size);
+            let ui_size = UVec2::new(
+                ui_size.x.clamp(resize.info.min_width.unwrap_or(0), resize.info.max_width.unwrap_or(u32::MAX)), 
+                ui_size.y.clamp(resize.info.min_height.unwrap_or(0), resize.info.max_height.unwrap_or(u32::MAX)), 
+            );
             if let Some(img) = camera.image.and_then(|id| images.get_mut(id)) {
                 if img.size() != ui_size {
                     img.resize(Extent3d {
                         width: ui_size.x,
                         height: ui_size.y,
                         depth_or_array_layers: 1,
-                    })
+                    });
+                    // well this sucks, after updating the image we would ideally wait for the camera system to run, but for some reason
+                    // the change never gets picked up, so let's just update the size manually
+                    if let Ok(mut modify_camera) = cameras.get_component_mut::<Camera>(*camera_id) {
+                        modify_camera.computed.target_info.as_mut().unwrap().physical_size = ui_size;
+                    }
                 }
             }
         }

@@ -74,7 +74,7 @@ pub struct RenderTargetInfo {
 #[derive(Default, Debug, Clone)]
 pub struct ComputedCameraValues {
     projection_matrix: Mat4,
-    target_info: Option<RenderTargetInfo>,
+    pub target_info: Option<RenderTargetInfo>,
     // size of the `Viewport`
     old_viewport_size: Option<UVec2>,
 }
