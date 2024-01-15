@@ -510,11 +510,12 @@ pub fn ui_layout_system(
         );
         if let Some(resize) = &camera.resize_target {
             let ui_size = UVec2::new(
-                ui_size.x.clamp(resize.info.min_width.unwrap_or_default().max(16), resize.info.max_width.unwrap_or(u32::MAX)), 
-                ui_size.y.clamp(resize.info.min_height.unwrap_or_default().max(16), resize.info.max_height.unwrap_or(u32::MAX)), 
+                ui_size.x.clamp(resize.info.min_width.unwrap_or_default().max(16), resize.info.max_width.unwrap_or(u32::MAX).max(16)),
+                ui_size.y.clamp(resize.info.min_height.unwrap_or_default().max(16), resize.info.max_height.unwrap_or(u32::MAX).max(16)),
             );
             if let Some(img) = camera.image.and_then(|id| images.get_mut(id)) {
                 if img.size() != ui_size {
+                    println!("{:?} of {:?} -> {}", reference_size, resize, ui_size);
                     img.resize(Extent3d {
                         width: ui_size.x,
                         height: ui_size.y,
