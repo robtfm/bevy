@@ -478,7 +478,7 @@ pub fn ui_layout_system(
             );
             if let Some(img) = camera.image.and_then(|id| images.get_mut(id)) {
                 if img.size() != ui_size {
-                    println!("{:?} of {:?} -> {}", reference_size, resize, ui_size);
+                    // println!("{:?} of {:?} -> {}", reference_size, resize, ui_size);
                     img.resize(Extent3d {
                         width: ui_size.x,
                         height: ui_size.y,
