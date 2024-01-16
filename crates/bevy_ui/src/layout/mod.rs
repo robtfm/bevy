@@ -27,7 +27,7 @@ use bevy_transform::components::Transform;
 use bevy_utils::{default, HashMap, HashSet};
 use bevy_window::{PrimaryWindow, Window, WindowScaleFactorChanged, WindowRef};
 use std::fmt;
-use taffy::{style::AvailableSpace, Taffy};
+use taffy::{style::AvailableSpace, Taffy, tree::LayoutTree};
 use thiserror::Error;
 
 pub struct LayoutContext {
@@ -101,6 +101,7 @@ impl UiSurface {
         let taffy_node = self.entity_to_taffy.entry(entity).or_insert_with(|| {
             added = true;
             taffy.new_leaf(convert::from_style(context, style)).unwrap()
+            // println!("created entity node {entity:?}/{res:?}");
         });
 
         if !added {
@@ -134,6 +135,7 @@ without UI components as a child of an entity with UI components, results may be
         self.taffy
             .set_children(*taffy_node, &taffy_children)
             .unwrap();
+        // println!("set children {taffy_node:?} -> {taffy_children:?}");
     }
 
     /// Removes children from the entity's taffy node if it exists. Does nothing otherwise.
@@ -177,12 +179,20 @@ without UI components as a child of an entity with UI components, results may be
                 .iter()
                 .find(|n| n.user_root_node == node)
                 .cloned()
-                .unwrap_or_else(|| RootNodePair {
-                    implicit_viewport_node: self
+                .unwrap_or_else(|| {
+                    if let Some(current_parent) = self.taffy.parent(node) {
+                        // println!("found existing parent {current_parent:?}!");
+                        self.taffy.remove_child(current_parent, node).unwrap();
+                    }
+                    let implicit_viewport_node = self
                         .taffy
                         .new_with_children(viewport_style.clone(), &[node])
-                        .unwrap(),
-                    user_root_node: node,
+                        .unwrap();
+                    // println!("create implicit viewport node {implicit_viewport_node:?} with child {node:?}");
+                    RootNodePair {
+                        implicit_viewport_node,
+                        user_root_node: node,
+                    }
                 });
             new_roots.push(root_node);
         }
@@ -190,7 +200,9 @@ without UI components as a child of an entity with UI components, results may be
         // Cleanup the implicit root nodes of any user root nodes that have been removed
         for old_root in existing_roots {
             if !new_roots.contains(old_root) {
+                // println!("remove implicit viewport node {:?} [parent of {:?}", old_root.implicit_viewport_node, old_root.user_root_node);
                 self.taffy.remove(old_root.implicit_viewport_node).unwrap();
+                // println!("removed {:?}", old_root.implicit_viewport_node);
             }
         }
 
@@ -231,6 +243,7 @@ without UI components as a child of an entity with UI components, results may be
     pub fn remove_entities(&mut self, entities: impl IntoIterator<Item = Entity>) {
         for entity in entities {
             if let Some(node) = self.entity_to_taffy.remove(&entity) {
+                // println!("remove entity node {entity:?}/{node:?}");
                 self.taffy.remove(node).unwrap();
             }
         }
