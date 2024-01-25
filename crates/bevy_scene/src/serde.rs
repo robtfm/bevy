@@ -7,7 +7,7 @@ use bevy_reflect::{
     serde::{TypeRegistrationDeserializer, UntypedReflectDeserializer},
     Reflect, TypeRegistry, TypeRegistryArc,
 };
-use bevy_utils::HashSet;
+use bevy_utils::{HashSet, tracing::warn};
 use serde::ser::SerializeMap;
 use serde::{
     de::{DeserializeSeed, Error, MapAccess, SeqAccess, Visitor},
@@ -180,10 +180,13 @@ impl<'a> Serialize for SceneMapSerializer<'a> {
     {
         let mut state = serializer.serialize_map(Some(self.entries.len()))?;
         for reflect in self.entries {
-            state.serialize_entry(
+            match state.serialize_entry(
                 reflect.get_represented_type_info().unwrap().type_path(),
                 &TypedReflectSerializer::new(&**reflect, &self.registry.read()),
-            )?;
+            ) {
+                Ok(_) => (),
+                Err(e) => warn!("skipping serialize for {}: {e}", "something"),
+            };
         }
         state.end()
     }
