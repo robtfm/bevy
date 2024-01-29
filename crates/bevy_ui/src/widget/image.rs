@@ -1,5 +1,5 @@
 use crate::{
-    measurement::AvailableSpace, ContentSize, Measure, Node, UiImage, UiScale, UiTextureAtlasImage,
+    measurement::AvailableSpace, ContentSize, Measure, Node, NodeMeasure, UiImage, UiScale, UiTextureAtlasImage
 };
 use bevy_asset::{Assets, Handle};
 
@@ -99,10 +99,10 @@ pub fn update_image_content_size_system(
                 || content_size.is_added()
             {
                 image_size.size = size;
-                content_size.set(ImageMeasure {
+                content_size.set(NodeMeasure::Image(ImageMeasure {
                     // multiply the image size by the scale factor to get the physical size
                     size: size * combined_scale_factor as f32,
-                });
+                }));
             }
         }
     }
@@ -141,10 +141,10 @@ pub fn update_atlas_content_size_system(
                 || content_size.is_added()
             {
                 image_size.size = size;
-                content_size.set(ImageMeasure {
+                content_size.set(NodeMeasure::Image(ImageMeasure {
                     // multiply the image size by the scale factor to get the physical size
                     size: size * combined_scale_factor as f32,
-                });
+                }));
             }
         }
     }
