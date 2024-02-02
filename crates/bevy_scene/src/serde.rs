@@ -7,7 +7,7 @@ use bevy_reflect::{
     serde::{TypeRegistrationDeserializer, UntypedReflectDeserializer},
     Reflect, TypeRegistry, TypeRegistryArc,
 };
-use bevy_utils::{HashSet, tracing::warn};
+use bevy_utils::{tracing::warn, HashSet};
 use serde::ser::SerializeMap;
 use serde::{
     de::{DeserializeSeed, Error, MapAccess, SeqAccess, Visitor},

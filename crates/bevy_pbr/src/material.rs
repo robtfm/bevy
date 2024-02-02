@@ -168,6 +168,13 @@ pub trait Material: Asset + AsBindGroup + Clone + Sized {
         ShaderRef::Default
     }
 
+    /// Specify a group key to use for shadows.
+    /// Allows batching of distinct materials which have a common depth-prepass output
+    /// (such as Opaque `StandardMaterial`s with different textures)
+    fn shadow_material_key(&self) -> Option<u64> {
+        None
+    }
+
     /// Customizes the default [`RenderPipelineDescriptor`] for a specific entity using the entity's
     /// [`MaterialPipelineKey`] and [`MeshVertexBufferLayout`] as input.
     #[allow(unused_variables)]
@@ -761,16 +768,33 @@ pub struct MaterialProperties {
 pub struct PreparedMaterial<T: Material> {
     pub bindings: Vec<(u32, OwnedBindingResource)>,
     pub bind_group: BindGroup,
+    pub prepass_bind_group_id: MaterialBindGroupId,
     pub key: T::Data,
     pub properties: MaterialProperties,
 }
 
-#[derive(Component, Clone, Copy, Default, PartialEq, Eq, Deref, DerefMut)]
-pub struct MaterialBindGroupId(Option<BindGroupId>);
+#[derive(Component, Clone, Copy, Default)]
+pub enum MaterialBindGroupId {
+    #[default]
+    Unbatched,
+    Instance(BindGroupId),
+    Group(u64),
+}
+
+impl PartialEq for MaterialBindGroupId {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Instance(l0), Self::Instance(r0)) => l0 == r0,
+            (Self::Group(l0), Self::Group(r0)) => l0 == r0,
+            // unbatched should never report equal to prevent batching
+            _ => false,
+        }
+    }
+}
 
 impl<T: Material> PreparedMaterial<T> {
     pub fn get_bind_group_id(&self) -> MaterialBindGroupId {
-        MaterialBindGroupId(Some(self.bind_group.id()))
+        MaterialBindGroupId::Instance(self.bind_group.id())
     }
 }
 
@@ -923,9 +947,14 @@ fn prepare_material<M: Material>(
         OpaqueRendererMethod::Deferred => OpaqueRendererMethod::Deferred,
         OpaqueRendererMethod::Auto => default_opaque_render_method,
     };
+    let prepass_bind_group_id = match material.shadow_material_key() {
+        Some(key) => MaterialBindGroupId::Group(key),
+        None => MaterialBindGroupId::Instance(prepared.bind_group.id()),
+    };
     Ok(PreparedMaterial {
         bindings: prepared.bindings,
         bind_group: prepared.bind_group,
+        prepass_bind_group_id,
         key: prepared.data,
         properties: MaterialProperties {
             alpha_mode: material.alpha_mode(),

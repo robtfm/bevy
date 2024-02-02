@@ -803,6 +803,10 @@ impl Material for StandardMaterial {
         self.specular_transmission > 0.0
     }
 
+    fn shadow_material_key(&self) -> Option<u64> {
+        (self.alpha_mode == AlphaMode::Opaque).then_some(0)
+    }
+
     #[inline]
     fn opaque_render_method(&self) -> OpaqueRendererMethod {
         match self.opaque_render_method {

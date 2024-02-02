@@ -1550,12 +1550,12 @@ pub fn queue_shadows<M: Material>(
     shadow_draw_functions: Res<DrawFunctions<Shadow>>,
     prepass_pipeline: Res<PrepassPipeline<M>>,
     render_meshes: Res<RenderAssets<Mesh>>,
-    render_mesh_instances: Res<RenderMeshInstances>,
+    mut render_mesh_instances: ResMut<RenderMeshInstances>,
     render_materials: Res<RenderMaterials<M>>,
     render_material_instances: Res<RenderMaterialInstances<M>>,
     mut pipelines: ResMut<SpecializedMeshPipelines<PrepassPipeline<M>>>,
     pipeline_cache: Res<PipelineCache>,
-    view_lights: Query<(Entity, &ViewLightEntities)>,
+    view_lights: Query<(Entity, &ExtractedView, &ViewLightEntities)>,
     mut view_light_shadow_phases: Query<(&LightEntity, &mut RenderPhase<Shadow>)>,
     point_light_entities: Query<&CubemapVisibleEntities, With<ExtractedPointLight>>,
     directional_light_entities: Query<&CascadesVisibleEntities, With<ExtractedDirectionalLight>>,
@@ -1563,7 +1563,8 @@ pub fn queue_shadows<M: Material>(
 ) where
     M::Data: PartialEq + Eq + Hash + Clone,
 {
-    for (entity, view_lights) in &view_lights {
+    for (entity, view, view_lights) in &view_lights {
+        let rangefinder = view.rangefinder3d();
         let draw_shadow_mesh = shadow_draw_functions.read().id::<DrawPrepass<M>>();
         for view_light_entity in view_lights.lights.iter().copied() {
             let (light_entity, mut shadow_phase) =
@@ -1595,7 +1596,7 @@ pub fn queue_shadows<M: Material>(
             // NOTE: Lights with shadow mapping disabled will have no visible entities
             // so no meshes will be queued
             for entity in visible_entities.iter().copied() {
-                let Some(mesh_instance) = render_mesh_instances.get(&entity) else {
+                let Some(mesh_instance) = render_mesh_instances.get_mut(&entity) else {
                     continue;
                 };
                 if !mesh_instance.shadow_caster {
@@ -1645,11 +1646,16 @@ pub fn queue_shadows<M: Material>(
                     }
                 };
 
+                mesh_instance.prepass_material_bind_group_id = material.prepass_bind_group_id;
+
+                let distance = rangefinder
+                    .distance_translation(&mesh_instance.transforms.transform.translation);
+
                 shadow_phase.add(Shadow {
                     draw_function: draw_shadow_mesh,
                     pipeline: pipeline_id,
                     entity,
-                    distance: 0.0, // TODO: sort front-to-back
+                    distance,
                     batch_range: 0..1,
                     dynamic_offset: None,
                 });

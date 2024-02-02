@@ -135,7 +135,7 @@ impl Plugin for MeshRenderPlugin {
                             batch_and_prepare_render_phase::<Transmissive3d, MeshPipeline>,
                             batch_and_prepare_render_phase::<Transparent3d, MeshPipeline>,
                             batch_and_prepare_render_phase::<AlphaMask3d, MeshPipeline>,
-                            batch_and_prepare_render_phase::<Shadow, MeshPipeline>,
+                            batch_and_prepare_render_phase::<Shadow, ShadowMeshPipeline>,
                             batch_and_prepare_render_phase::<Opaque3dDeferred, MeshPipeline>,
                             batch_and_prepare_render_phase::<AlphaMask3dDeferred, MeshPipeline>,
                         )
@@ -236,6 +236,7 @@ pub struct RenderMeshInstance {
     pub transforms: MeshTransforms,
     pub mesh_asset_id: AssetId<Mesh>,
     pub material_bind_group_id: MaterialBindGroupId,
+    pub prepass_material_bind_group_id: MaterialBindGroupId,
     pub shadow_caster: bool,
     pub automatic_batching: bool,
 }
@@ -307,6 +308,7 @@ pub fn extract_meshes(
                     transforms,
                     shadow_caster: !not_caster,
                     material_bind_group_id: MaterialBindGroupId::default(),
+                    prepass_material_bind_group_id: MaterialBindGroupId::default(),
                     automatic_batching: !no_automatic_batching,
                 },
             ));
@@ -469,6 +471,31 @@ impl GetBatchData for MeshPipeline {
             (&mesh_instance.transforms).into(),
             mesh_instance.automatic_batching.then_some((
                 mesh_instance.material_bind_group_id,
+                mesh_instance.mesh_asset_id,
+            )),
+        )
+    }
+}
+
+pub struct ShadowMeshPipeline;
+impl GetBatchData for ShadowMeshPipeline {
+    type Param = SRes<RenderMeshInstances>;
+    type Query = Entity;
+    type QueryFilter = With<Mesh3d>;
+    type CompareData = (MaterialBindGroupId, AssetId<Mesh>);
+    type BufferData = MeshUniform;
+
+    fn get_batch_data(
+        mesh_instances: &SystemParamItem<Self::Param>,
+        entity: &QueryItem<Self::Query>,
+    ) -> (Self::BufferData, Option<Self::CompareData>) {
+        let mesh_instance = mesh_instances
+            .get(entity)
+            .expect("Failed to find render mesh instance");
+        (
+            (&mesh_instance.transforms).into(),
+            mesh_instance.automatic_batching.then_some((
+                mesh_instance.prepass_material_bind_group_id,
                 mesh_instance.mesh_asset_id,
             )),
         )
