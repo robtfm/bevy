@@ -137,6 +137,7 @@ pub enum RepeatAnimation {
 #[derive(Reflect)]
 struct PlayingAnimation {
     repeat: RepeatAnimation,
+    should_reset: bool,
     speed: f32,
     /// Total time the animation has been played.
     ///
@@ -157,6 +158,7 @@ impl Default for PlayingAnimation {
     fn default() -> Self {
         Self {
             repeat: RepeatAnimation::default(),
+            should_reset: true,
             speed: 1.0,
             elapsed: 0.0,
             seek_time: 0.0,
@@ -197,10 +199,26 @@ impl PlayingAnimation {
         }
 
         if self.seek_time >= clip_duration {
-            self.seek_time %= clip_duration;
+            if self.is_finished() {
+                if self.should_reset {
+                    self.seek_time = 0.0;
+                } else {
+                    self.seek_time = clip_duration;
+                }
+            } else {
+                self.seek_time %= clip_duration;
+            }
         }
         if self.seek_time < 0.0 {
-            self.seek_time += clip_duration;
+            if self.is_finished() {
+                if self.should_reset {
+                    self.seek_time = clip_duration;
+                } else {
+                    self.seek_time = 0.0;
+                }
+            } else {
+                self.seek_time += clip_duration;
+            }
         }
     }
 
@@ -287,6 +305,12 @@ impl AnimationPlayer {
         if !self.is_playing_clip(&handle) || self.is_paused() {
             self.start(handle);
         }
+        self
+    }
+
+    /// specifies if the player should revert to the initial position once completed
+    pub fn set_should_reset(&mut self, should_reset: bool) -> &mut Self {
+        self.animation.should_reset = should_reset;
         self
     }
 
