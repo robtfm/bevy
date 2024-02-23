@@ -1,5 +1,6 @@
 use bevy_asset::{io::Reader, AssetLoader, AsyncReadExt, LoadContext};
 use bevy_ecs::prelude::{FromWorld, World};
+use bevy_log::warn;
 use thiserror::Error;
 
 use crate::{
@@ -18,6 +19,7 @@ pub struct ImageLoader {
 }
 
 pub(crate) const IMG_FILE_EXTENSIONS: &[&str] = &[
+    "image",
     #[cfg(feature = "basis-universal")]
     "basis",
     #[cfg(feature = "bmp")]
@@ -98,6 +100,28 @@ impl AssetLoader for ImageLoader {
             let mut bytes = Vec::new();
             reader.read_to_end(&mut bytes).await?;
             let image_type = match settings.format {
+                ImageFormatSetting::FromContent => {
+                    let image_crate_format =
+                        image::guess_format(&bytes).map_err(|err| FileTextureError {
+                            error: TextureError::ImageError(err),
+                            path: format!("{}", load_context.path().display()),
+                        })?;
+
+                    let format = ImageFormat::from_image_crate_format(image_crate_format)
+                        .ok_or_else(|| FileTextureError {
+                            error: TextureError::InvalidImageContentType(image_crate_format),
+                            path: format!("{}", load_context.path().display()),
+                        })?;
+
+                    // validate that the file format matches the content
+                    if let Some(ext_format) = ImageFormat::from_extension(ext) {
+                        if ext_format != format {
+                            warn!("mismatched format for {}, filename extension `{}` has content of type {:?}", load_context.path().display(), ext, format);
+                        }
+                    }
+
+                    ImageType::Format(format)
+                }
                 ImageFormatSetting::FromExtension => ImageType::Extension(ext),
                 ImageFormatSetting::Format(format) => ImageType::Format(format),
             };
