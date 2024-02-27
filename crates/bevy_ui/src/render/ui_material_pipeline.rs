@@ -727,7 +727,9 @@ pub fn queue_ui_material_nodes<M: UiMaterial>(
     let draw_function = draw_functions.read().id::<DrawUiMaterial<M>>();
 
     for (entity, extracted_uinode) in extracted_uinodes.uinodes.iter() {
-        let material = render_materials.get(&extracted_uinode.material).unwrap();
+        let Some(material) = render_materials.get(&extracted_uinode.material) else {
+            continue;
+        };
         for (view, mut transparent_phase) in &mut views {
             let pipeline = pipelines.specialize(
                 &pipeline_cache,
