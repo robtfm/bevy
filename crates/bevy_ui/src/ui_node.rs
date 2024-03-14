@@ -1939,22 +1939,3 @@ pub struct ResizeTarget {
     pub height: Option<ResizeAxis>,
     pub info: ResizeInfo,
 }
-
-#[derive(Clone, Debug, Reflect, PartialEq)]
-pub struct ResizeInfo {
-    pub min_size: UVec2,
-    pub max_size: UVec2,
-    pub viewport_reference_size: UVec2,
-}
-
-#[derive(Clone, Copy, Debug, Reflect, PartialEq)]
-pub enum ResizeType {
-    MinContent,
-    MaxContent,
-}
-
-#[derive(Component, Clone, Debug, Reflect, PartialEq)]
-pub struct ResizeTarget {
-    pub ty: ResizeType,
-    pub info: ResizeInfo,
-}

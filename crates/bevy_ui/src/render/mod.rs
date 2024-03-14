@@ -15,10 +15,10 @@ pub use pipeline::*;
 pub use render_pass::*;
 pub use ui_material_pipeline::*;
 
-use crate::graph::{NodeUi, SubGraphUi};
+use crate::{graph::{NodeUi, SubGraphUi}, texture_slice::ComputedTextureSlices, Outline, TargetCamera};
 use crate::{
-    prelude::UiCameraConfig, BackgroundColor, BorderColor, CalculatedClip, ContentSize,
-    DefaultUiCamera, Node, Style, UiImage, UiScale, UiTextureAtlasImage, Val,
+    BackgroundColor, BorderColor, CalculatedClip, ContentSize,
+    DefaultUiCamera, Node, Style, UiImage, UiScale, Val,
 };
 
 use bevy_app::prelude::*;

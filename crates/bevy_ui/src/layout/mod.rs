@@ -2,8 +2,7 @@ mod convert;
 pub mod debug;
 
 use crate::{
-    ContentSize, Node, Outline, ResizeTarget, Style, TargetCamera,
-    UiScale, ResizeAxis,
+    ContentSize, Measure, Node, NodeMeasure, Outline, ResizeAxis, ResizeTarget, Style, TargetCamera, UiScale
 };
 use bevy_asset::{AssetId, Assets};
 use bevy_ecs::{
@@ -25,10 +24,10 @@ use bevy_render::{
 };
 use bevy_transform::components::Transform;
 use bevy_utils::{default, HashMap, HashSet};
-use bevy_window::{PrimaryWindow, Window, WindowScaleFactorChanged, WindowRef};
+use bevy_window::{PrimaryWindow, Window, WindowRef, WindowScaleFactorChanged};
 use taffy::TaffyTree;
 use std::fmt;
-use taffy::{style::AvailableSpace, Taffy};
+use taffy::AvailableSpace;
 use thiserror::Error;
 
 pub struct LayoutContext {
@@ -333,16 +332,26 @@ pub fn ui_layout_system(
     struct CameraLayoutInfo {
         size: UVec2,
         resized: bool,
-        scale_factor: f64,
+        scale_factor: f32,
         resize_target: Option<ResizeTarget>,
         image: Option<AssetId<Image>>,
         root_nodes: Vec<Entity>,
     }
 
+    let default_single_camera = cameras
+        .iter()
+        .filter(|(_, c, _)| match c.target {
+            RenderTarget::Window(WindowRef::Primary) => true,
+            RenderTarget::Window(WindowRef::Entity(w)) => primary_window.get(w).is_ok(),
+            _ => false,
+        })
+        .max_by_key(|(e, c, _)| (c.order, *e))
+        .map(|(e, _, _)| e);
+
     let camera_with_default = |target_camera: Option<&TargetCamera>| {
         target_camera
             .map(TargetCamera::entity)
-            .or(default_ui_camera.get())
+            .or(default_single_camera)
     };
 
     let resized_windows: HashSet<Entity> = resize_events.read().map(|event| event.window).collect();
@@ -459,7 +468,7 @@ pub fn ui_layout_system(
     ui_surface.remove_camera_entities(removed_components.removed_cameras.read());
 
     // update camera children
-    for (camera_id, _) in cameras.iter() {
+    for (camera_id, _, _) in cameras.iter() {
         let root_nodes =
             if let Some(CameraLayoutInfo { root_nodes, .. }) = camera_layout_info.get(&camera_id) {
                 root_nodes.iter().cloned()
@@ -515,7 +524,7 @@ pub fn ui_layout_system(
             );
             if let Some(img) = camera.image.and_then(|id| images.get_mut(id)) {
                 if img.size() != ui_size {
-                    println!("{:?} of {:?} -> {}", reference_size, resize, ui_size);
+                    // println!("{:?} of {:?} -> {}", reference_size, resize, ui_size);
                     img.resize(Extent3d {
                         width: ui_size.x,
                         height: ui_size.y,
@@ -523,7 +532,7 @@ pub fn ui_layout_system(
                     });
                     // well this sucks, after updating the image we would ideally wait for the camera system to run, but for some reason
                     // the change never gets picked up, so let's just update the size manually
-                    if let Ok(mut modify_camera) = cameras.get_component_mut::<Camera>(*camera_id) {
+                    if let Ok((_, mut modify_camera, _)) = cameras.get_mut(*camera_id) {
                         modify_camera.computed.target_info.as_mut().unwrap().physical_size = ui_size;
                     }
                 }

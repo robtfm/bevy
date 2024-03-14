@@ -1,8 +1,4 @@
-use crate::{
-    camera_config::UiCameraConfig, CalculatedClip, DefaultUiCamera, Node, TargetCamera, UiScale,
-    UiStack,
-};
-use bevy_derive::{Deref, DerefMut};
+use crate::{CalculatedClip, DefaultUiCamera, Node, TargetCamera, UiScale, UiStack};
 use bevy_ecs::{
     change_detection::DetectChangesMut,
     entity::Entity,
