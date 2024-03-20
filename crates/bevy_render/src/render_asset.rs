@@ -7,12 +7,13 @@ use bevy_ecs::{
     system::{StaticSystemParam, SystemParam, SystemParamItem, SystemState},
     world::{FromWorld, Mut},
 };
+use bevy_log::debug;
 use bevy_reflect::{
     utility::{reflect_hasher, NonGenericTypeInfoCell},
     FromReflect, Reflect, ReflectKind, ReflectMut, ReflectOwned, ReflectRef, TypeInfo, TypePath,
     Typed, ValueInfo,
 };
-use bevy_utils::{thiserror::Error, HashMap, HashSet};
+use bevy_utils::{thiserror::Error, Duration, HashMap, HashSet, Instant};
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
 
@@ -37,6 +38,10 @@ pub trait RenderAsset: Asset + Clone {
     ///
     /// For convenience use the [`lifetimeless`](bevy_ecs::system::lifetimeless) [`SystemParam`].
     type Param: SystemParam;
+
+    fn time_per_frame() -> Duration {
+        Duration::from_millis(10)
+    }
 
     /// Whether or not to unload the asset after extracting it to the render world.
     fn asset_usage(&self) -> RenderAssetUsages;
@@ -383,11 +388,17 @@ pub fn prepare_assets<A: RenderAsset>(
     mut render_assets: ResMut<RenderAssets<A>>,
     mut prepare_next_frame: ResMut<PrepareNextFrameAssets<A>>,
     param: StaticSystemParam<<A as RenderAsset>::Param>,
+    // mut last_end: Local<Option<Instant>>,
 ) {
+    let start_time = Instant::now();
+    let mut oot = false;
+    let mut dropped = 0;
+
     let mut param = param.into_inner();
-    let queued_assets = std::mem::take(&mut prepare_next_frame.assets);
-    for (id, extracted_asset) in queued_assets {
+    let mut queued_assets = std::mem::take(&mut prepare_next_frame.assets).into_iter();
+    while let Some((id, extracted_asset)) = queued_assets.next() {
         if extracted_assets.removed.contains(&id) {
+            dropped += 1;
             continue;
         }
 
@@ -399,20 +410,47 @@ pub fn prepare_assets<A: RenderAsset>(
                 prepare_next_frame.assets.push((id, extracted_asset));
             }
         }
+
+        if Instant::now().checked_duration_since(start_time).map_or(false, |dur| dur > A::time_per_frame()) {
+            oot = true;
+            break;
+        }
     }
+
+    prepare_next_frame.assets.extend(queued_assets);
 
     for removed in extracted_assets.removed.drain(..) {
-        render_assets.remove(removed);
+        if render_assets.remove(removed).is_some() {
+            dropped += 1;
+        }
     }
 
-    for (id, extracted_asset) in extracted_assets.extracted.drain(..) {
-        match extracted_asset.prepare_asset(&mut param) {
-            Ok(prepared_asset) => {
-                render_assets.insert(id, prepared_asset);
+    let mut extracted_assets = extracted_assets.extracted.drain(..);
+
+    if !oot {
+        while let Some((id, extracted_asset)) = extracted_assets.next() {
+            match extracted_asset.prepare_asset(&mut param) {
+                Ok(prepared_asset) => {
+                    render_assets.insert(id, prepared_asset);
+                }
+                Err(PrepareAssetError::RetryNextUpdate(extracted_asset)) => {
+                    prepare_next_frame.assets.push((id, extracted_asset));
+                }
             }
-            Err(PrepareAssetError::RetryNextUpdate(extracted_asset)) => {
-                prepare_next_frame.assets.push((id, extracted_asset));
+    
+            if Instant::now().checked_duration_since(start_time).map_or(false, |dur| dur > A::time_per_frame()) {
+                oot = true;
+                break;
             }
         }
+    }
+
+    prepare_next_frame.assets.extend(extracted_assets);
+    // *last_end = Some(Instant::now());
+    if oot {
+        debug!("{} oot with {} assets remaining", std::any::type_name::<A>(), prepare_next_frame.assets.len())
+    }
+    if dropped > 0 {
+        debug!("{} dropped {} assets", std::any::type_name::<A>(), dropped);
     }
 }
