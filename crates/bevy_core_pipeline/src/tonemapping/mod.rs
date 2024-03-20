@@ -3,7 +3,6 @@ use bevy_app::prelude::*;
 use bevy_asset::{load_internal_asset, Assets, Handle};
 use bevy_ecs::prelude::*;
 use bevy_reflect::Reflect;
-use bevy_render::{camera::Camera, texture::FallbackImage};
 use bevy_render::extract_component::{ExtractComponent, ExtractComponentPlugin};
 use bevy_render::extract_resource::{ExtractResource, ExtractResourcePlugin};
 use bevy_render::render_asset::{RenderAssetUsages, RenderAssets};
@@ -13,6 +12,7 @@ use bevy_render::render_resource::binding_types::{
 use bevy_render::renderer::RenderDevice;
 use bevy_render::texture::{CompressedImageFormats, Image, ImageSampler, ImageType};
 use bevy_render::view::{ViewTarget, ViewUniform};
+use bevy_render::{camera::Camera, texture::FallbackImage};
 use bevy_render::{render_resource::*, Render, RenderApp, RenderSet};
 
 mod node;
@@ -331,7 +331,7 @@ pub fn get_lut_bindings<'a>(
         Tonemapping::TonyMcMapface => &tonemapping_luts.tony_mc_mapface,
         Tonemapping::BlenderFilmic => &tonemapping_luts.blender_filmic,
     };
-    let lut_image = images.get(image).unwrap_or_else(|| &fallback_image.d3);
+    let lut_image = images.get(image).unwrap_or(&fallback_image.d3);
     (&lut_image.texture_view, &lut_image.sampler)
 }
 

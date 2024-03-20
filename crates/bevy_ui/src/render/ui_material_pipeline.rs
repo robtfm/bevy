@@ -387,16 +387,17 @@ pub fn extract_ui_material_nodes<M: UiMaterial>(
         .unwrap_or(Vec2::ZERO)
         // The logical window resolution returned by `Window` only takes into account the window scale factor and not `UiScale`,
         // so we have to divide by `UiScale` to get the size of the UI viewport.
-        / ui_scale.0 as f32;
+        / ui_scale.0;
 
     // If there is only one camera, we use it as default
     let default_single_camera = default_ui_camera.get();
-        
+
     for (stack_index, entity) in ui_stack.uinodes.iter().enumerate() {
         if let Ok((entity, uinode, style, transform, handle, view_visibility, clip, camera)) =
             uinode_query.get(*entity)
         {
-            let Some(camera_entity) = camera.map(TargetCamera::entity).or(default_single_camera) else {
+            let Some(camera_entity) = camera.map(TargetCamera::entity).or(default_single_camera)
+            else {
                 continue;
             };
 
@@ -766,7 +767,7 @@ pub fn queue_ui_material_nodes<M: UiMaterial>(
         let Some(material) = render_materials.get(&extracted_uinode.material) else {
             continue;
         };
-        
+
         let Ok((view, mut transparent_phase)) = views.get_mut(extracted_uinode.camera_entity)
         else {
             continue;

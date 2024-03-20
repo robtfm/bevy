@@ -84,7 +84,8 @@ impl ViewNode for TonemappingNode {
             cached_bind_group => {
                 let tonemapping_luts = world.resource::<TonemappingLuts>();
 
-                let lut_bindings = get_lut_bindings(gpu_images, tonemapping_luts, tonemapping, fallback_image);
+                let lut_bindings =
+                    get_lut_bindings(gpu_images, tonemapping_luts, tonemapping, fallback_image);
 
                 let bind_group = render_context.render_device().create_bind_group(
                     None,
@@ -98,8 +99,12 @@ impl ViewNode for TonemappingNode {
                     )),
                 );
 
-                let (_, _, _, bind_group) =
-                    cached_bind_group.insert((view_uniforms_id, source.id(), lut_bindings.0.id(), bind_group));
+                let (_, _, _, bind_group) = cached_bind_group.insert((
+                    view_uniforms_id,
+                    source.id(),
+                    lut_bindings.0.id(),
+                    bind_group,
+                ));
                 bind_group
             }
         };

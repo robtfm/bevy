@@ -411,7 +411,10 @@ pub fn prepare_assets<A: RenderAsset>(
             }
         }
 
-        if Instant::now().checked_duration_since(start_time).map_or(false, |dur| dur > A::time_per_frame()) {
+        if Instant::now()
+            .checked_duration_since(start_time)
+            .map_or(false, |dur| dur > A::time_per_frame())
+        {
             oot = true;
             break;
         }
@@ -437,8 +440,11 @@ pub fn prepare_assets<A: RenderAsset>(
                     prepare_next_frame.assets.push((id, extracted_asset));
                 }
             }
-    
-            if Instant::now().checked_duration_since(start_time).map_or(false, |dur| dur > A::time_per_frame()) {
+
+            if Instant::now()
+                .checked_duration_since(start_time)
+                .map_or(false, |dur| dur > A::time_per_frame())
+            {
                 oot = true;
                 break;
             }
@@ -448,7 +454,11 @@ pub fn prepare_assets<A: RenderAsset>(
     prepare_next_frame.assets.extend(extracted_assets);
     // *last_end = Some(Instant::now());
     if oot {
-        debug!("{} oot with {} assets remaining", std::any::type_name::<A>(), prepare_next_frame.assets.len())
+        debug!(
+            "{} oot with {} assets remaining",
+            std::any::type_name::<A>(),
+            prepare_next_frame.assets.len()
+        )
     }
     if dropped > 0 {
         debug!("{} dropped {} assets", std::any::type_name::<A>(), dropped);

@@ -1384,7 +1384,7 @@ impl RenderAsset for Mesh {
                     return Err(PrepareAssetError::RetryNextUpdate(self));
                 };
                 Some(target_image.texture_view.clone())
-            },
+            }
             None => None,
         };
 

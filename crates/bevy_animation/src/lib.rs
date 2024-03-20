@@ -378,7 +378,7 @@ impl AnimationPlayer {
         self.animation.should_reset = should_reset;
         self
     }
-    
+
     /// Start playing an animation, resetting state of the player, unless the requested animation is already playing.
     pub fn play(&mut self, handle: Handle<AnimationClip>) -> &mut Self {
         if !self.is_playing_clip(&handle) || self.is_paused() {
