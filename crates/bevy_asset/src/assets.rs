@@ -514,6 +514,7 @@ impl<A: Asset> Assets<A> {
                     }
                 }
                 if infos.process_handle_drop(untyped_id) {
+                    assets.queued_events.push(AssetEvent::Unused { id });
                     assets.remove_dropped(id);
                 }
             } else {
