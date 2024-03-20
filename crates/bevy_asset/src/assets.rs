@@ -503,8 +503,6 @@ impl<A: Asset> Assets<A> {
         while let Ok(drop_event) = assets.handle_provider.drop_receiver.try_recv() {
             let id = drop_event.id.typed();
 
-            assets.queued_events.push(AssetEvent::Unused { id });
-
             if drop_event.asset_server_managed {
                 let untyped_id = drop_event.id.untyped(TypeId::of::<A>());
                 if let Some(info) = infos.get(untyped_id) {
@@ -519,6 +517,7 @@ impl<A: Asset> Assets<A> {
                     assets.remove_dropped(id);
                 }
             } else {
+                assets.queued_events.push(AssetEvent::Unused { id });
                 assets.remove_dropped(id);
             }
         }
