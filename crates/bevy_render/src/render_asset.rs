@@ -404,14 +404,6 @@ pub fn prepare_assets<A: RenderAsset>(
             continue;
         }
 
-        if extracted_assets
-            .extracted
-            .iter()
-            .any(|(new_id, _)| &id == new_id)
-        {
-            continue;
-        }
-
         if let Some(size) = extracted_asset.byte_len() {
             if bpf.write_bytes(size) == 0 {
                 prepare_next_frame.assets.push((id, extracted_asset));
