@@ -12,6 +12,7 @@ use bevy_ecs::{
     system::*,
     world::{FromWorld, World},
 };
+use bevy_log::warn;
 use bevy_math::{Mat4, Rect, Vec2, Vec4Swizzles};
 use bevy_render::{
     extract_component::ExtractComponentPlugin,
@@ -708,6 +709,9 @@ pub fn prepare_ui_materials<M: UiMaterial>(
             Err(AsBindGroupError::RetryNextUpdate) => {
                 prepare_next_frame.assets.push((id, material));
             }
+            Err(AsBindGroupError::InvalidData(msg)) => {
+                warn!("UiMaterial<{}> Bind group contains invalid data: {msg}", std::any::type_name::<M>());
+            }
         }
     }
 
@@ -728,6 +732,9 @@ pub fn prepare_ui_materials<M: UiMaterial>(
             }
             Err(AsBindGroupError::RetryNextUpdate) => {
                 prepare_next_frame.assets.push((handle, material));
+            }
+            Err(AsBindGroupError::InvalidData(msg)) => {
+                warn!("UiMaterial<{}> Bind group contains invalid data: {msg}", std::any::type_name::<M>());
             }
         }
     }
