@@ -301,7 +301,7 @@ impl PlayingAnimation {
     fn replay(&mut self) {
         self.completions = 0;
         self.elapsed = 0.0;
-        self.seek_time = 0.0;
+        self.seek_time = f32::NAN;
     }
 }
 
@@ -466,6 +466,11 @@ impl AnimationPlayer {
 
     /// Set the speed of the animation playback
     pub fn set_speed(&mut self, speed: f32) -> &mut Self {
+        if self.is_finished() {
+            if (self.animation.speed >= 0.0) != (speed >= 0.0) {
+                self.animation.completions = 0;
+            }
+        }
         self.animation.speed = speed;
         self
     }
@@ -613,6 +618,19 @@ fn run_animation_player(
     parents: &Query<(Has<AnimationPlayer>, Option<&Parent>)>,
     children: &Query<&Children>,
 ) {
+    // set clip time if it was reset (we do this where the anim is available so that we can set to end if required, and before returning on paused to avoid leaving nans)
+    if player.animation.seek_time.is_nan() {
+        let Some(animation_clip) = animations.get(&player.animation.animation_clip) else {
+            return;
+        };
+    
+        if player.animation.speed >= 0.0 {
+            player.animation.seek_time = 0.0;
+        } else {
+            player.animation.seek_time = animation_clip.duration;
+        }
+    }
+
     let paused = player.paused;
     // Continue if paused unless the `AnimationPlayer` was changed
     // This allow the animation to still be updated if the player.elapsed field was manually updated in pause
