@@ -249,6 +249,7 @@ impl<A: RenderAsset> RenderAssetDependency for A {
 pub struct ExtractedAssets<A: RenderAsset> {
     extracted: Vec<(AssetId<A>, A)>,
     removed: Vec<AssetId<A>>,
+    added: Vec<AssetId<A>>,
 }
 
 impl<A: RenderAsset> Default for ExtractedAssets<A> {
@@ -256,6 +257,7 @@ impl<A: RenderAsset> Default for ExtractedAssets<A> {
         Self {
             extracted: Default::default(),
             removed: Default::default(),
+            added: Default::default(),
         }
     }
 }
@@ -345,6 +347,7 @@ fn extract_render_asset<A: RenderAsset>(mut commands: Commands, mut main_world: 
             }
 
             let mut extracted_assets = Vec::new();
+            let mut added = Vec::new();
             for id in changed_assets.drain() {
                 if let Some(asset) = assets.get(id) {
                     let asset_usage = asset.asset_usage();
@@ -352,9 +355,11 @@ fn extract_render_asset<A: RenderAsset>(mut commands: Commands, mut main_world: 
                         if asset_usage == RenderAssetUsages::RENDER_WORLD {
                             if let Some(asset) = assets.remove(id) {
                                 extracted_assets.push((id, asset));
+                                added.push(id);
                             }
                         } else {
                             extracted_assets.push((id, asset.clone()));
+                            added.push(id);
                         }
                     }
                 }
@@ -363,6 +368,7 @@ fn extract_render_asset<A: RenderAsset>(mut commands: Commands, mut main_world: 
             commands.insert_resource(ExtractedAssets {
                 extracted: extracted_assets,
                 removed,
+                added,
             });
             cached_state.state.apply(world);
         },
@@ -399,7 +405,7 @@ pub fn prepare_assets<A: RenderAsset>(
     let mut param = param.into_inner();
     let mut queued_assets = std::mem::take(&mut prepare_next_frame.assets).into_iter();
     for (id, extracted_asset) in queued_assets.by_ref() {
-        if extracted_assets.removed.contains(&id) {
+        if extracted_assets.removed.contains(&id) || extracted_assets.added.contains(&id) {
             dropped += 1;
             continue;
         }
@@ -407,7 +413,7 @@ pub fn prepare_assets<A: RenderAsset>(
         if let Some(size) = extracted_asset.byte_len() {
             if bpf.write_bytes(size) == 0 {
                 prepare_next_frame.assets.push((id, extracted_asset));
-                break;
+                continue;
             }
         }
 
@@ -422,8 +428,6 @@ pub fn prepare_assets<A: RenderAsset>(
         }
     }
 
-    prepare_next_frame.assets.extend(queued_assets);
-
     for removed in extracted_assets.removed.drain(..) {
         if render_assets.remove(removed).is_some() {
             dropped += 1;
@@ -436,6 +440,7 @@ pub fn prepare_assets<A: RenderAsset>(
         if let Some(size) = extracted_asset.byte_len() {
             if bpf.write_bytes(size) == 0 {
                 prepare_next_frame.assets.push((id, extracted_asset));
+                render_assets.remove(id);
                 break;
             }
         }
