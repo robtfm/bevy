@@ -623,7 +623,7 @@ fn run_animation_player(
         let Some(animation_clip) = animations.get(&player.animation.animation_clip) else {
             return;
         };
-    
+
         if player.animation.speed >= 0.0 {
             player.animation.seek_time = 0.0;
         } else {

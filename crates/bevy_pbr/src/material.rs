@@ -30,7 +30,10 @@ use bevy_render::{
     view::{ExtractedView, Msaa, VisibleEntities},
     Extract, ExtractSchedule, Render, RenderApp, RenderSet,
 };
-use bevy_utils::{tracing::{error, warn}, HashMap, HashSet};
+use bevy_utils::{
+    tracing::{error, warn},
+    HashMap, HashSet,
+};
 use std::hash::Hash;
 use std::marker::PhantomData;
 
@@ -924,7 +927,10 @@ pub fn prepare_materials<M: Material>(
                 prepare_next_frame.assets.push((id, material));
             }
             Err(AsBindGroupError::InvalidData(msg)) => {
-                warn!("Material<{}> Bind group contains invalid data: {msg}", std::any::type_name::<M>());
+                warn!(
+                    "Material<{}> Bind group contains invalid data: {msg}",
+                    std::any::type_name::<M>()
+                );
             }
         }
     }
@@ -949,7 +955,10 @@ pub fn prepare_materials<M: Material>(
                 prepare_next_frame.assets.push((id, material));
             }
             Err(AsBindGroupError::InvalidData(msg)) => {
-                warn!("Material<{}> Bind group contains invalid data: {msg}", std::any::type_name::<M>());
+                warn!(
+                    "Material<{}> Bind group contains invalid data: {msg}",
+                    std::any::type_name::<M>()
+                );
             }
         }
     }

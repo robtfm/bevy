@@ -589,7 +589,10 @@ pub fn prepare_materials_2d<M: Material2d>(
                 prepare_next_frame.assets.push((id, material));
             }
             Err(AsBindGroupError::InvalidData(msg)) => {
-                warn!("Material2d<{}> Bind group contains invalid data: {msg}", std::any::type_name::<M>());
+                warn!(
+                    "Material2d<{}> Bind group contains invalid data: {msg}",
+                    std::any::type_name::<M>()
+                );
             }
         }
     }
@@ -613,7 +616,10 @@ pub fn prepare_materials_2d<M: Material2d>(
                 prepare_next_frame.assets.push((asset_id, material));
             }
             Err(AsBindGroupError::InvalidData(msg)) => {
-                warn!("Material2d<{}> Bind group contains invalid data: {msg}", std::any::type_name::<M>());
+                warn!(
+                    "Material2d<{}> Bind group contains invalid data: {msg}",
+                    std::any::type_name::<M>()
+                );
             }
         }
     }
