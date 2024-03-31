@@ -813,8 +813,8 @@ fn apply_animation(
             };
 
             let timestamp_start = curve.keyframe_timestamps[step_start];
-            let timestamp_end =
-                curve.keyframe_timestamps[(step_start + 1).min(curve.keyframe_timestamps.len() - 1)];
+            let timestamp_end = curve.keyframe_timestamps
+                [(step_start + 1).min(curve.keyframe_timestamps.len() - 1)];
             // Compute how far we are through the keyframe, normalized to [0, 1]
             let lerp = f32::inverse_lerp(timestamp_start, timestamp_end, animation.seek_time);
 
@@ -847,11 +847,13 @@ fn apply_keyframe(
 ) {
     match (&curve.interpolation, &curve.keyframes) {
         (Interpolation::Step, Keyframes::Rotation(keyframes)) => {
-            transform.rotation = transform.rotation.slerp(keyframes[step_start], weight);
+            transform.rotation = transform
+                .rotation
+                .slerp(keyframes[step_start.min(keyframes.len() - 1)], weight);
         }
         (Interpolation::Linear, Keyframes::Rotation(keyframes)) => {
-            let rot_start = keyframes[step_start];
-            let mut rot_end = keyframes[step_start + 1];
+            let rot_start = keyframes[step_start.min(keyframes.len() - 1)];
+            let mut rot_end = keyframes[(step_start + 1).min(keyframes.len() - 1)];
             // Choose the smallest angle for the rotation
             if rot_end.dot(rot_start) < 0.0 {
                 rot_end = -rot_end;
@@ -861,10 +863,10 @@ fn apply_keyframe(
             transform.rotation = transform.rotation.slerp(rot, weight);
         }
         (Interpolation::CubicSpline, Keyframes::Rotation(keyframes)) => {
-            let value_start = keyframes[step_start * 3 + 1];
-            let tangent_out_start = keyframes[step_start * 3 + 2];
-            let tangent_in_end = keyframes[(step_start + 1) * 3];
-            let value_end = keyframes[(step_start + 1) * 3 + 1];
+            let value_start = keyframes[(step_start * 3 + 1).min(keyframes.len() - 1)];
+            let tangent_out_start = keyframes[(step_start * 3 + 2).min(keyframes.len() - 1)];
+            let tangent_in_end = keyframes[((step_start + 1) * 3).min(keyframes.len() - 1)];
+            let value_end = keyframes[((step_start + 1) * 3 + 1).min(keyframes.len() - 1)];
             let result = cubic_spline_interpolation(
                 value_start,
                 tangent_out_start,
@@ -876,19 +878,21 @@ fn apply_keyframe(
             transform.rotation = transform.rotation.slerp(result.normalize(), weight);
         }
         (Interpolation::Step, Keyframes::Translation(keyframes)) => {
-            transform.translation = transform.translation.lerp(keyframes[step_start], weight);
+            transform.translation = transform
+                .translation
+                .lerp(keyframes[step_start.min(keyframes.len() - 1)], weight);
         }
         (Interpolation::Linear, Keyframes::Translation(keyframes)) => {
-            let translation_start = keyframes[step_start];
-            let translation_end = keyframes[step_start + 1];
+            let translation_start = keyframes[step_start.min(keyframes.len() - 1)];
+            let translation_end = keyframes[(step_start + 1).min(keyframes.len() - 1)];
             let result = translation_start.lerp(translation_end, lerp);
             transform.translation = transform.translation.lerp(result, weight);
         }
         (Interpolation::CubicSpline, Keyframes::Translation(keyframes)) => {
-            let value_start = keyframes[step_start * 3 + 1];
-            let tangent_out_start = keyframes[step_start * 3 + 2];
-            let tangent_in_end = keyframes[(step_start + 1) * 3];
-            let value_end = keyframes[(step_start + 1) * 3 + 1];
+            let value_start = keyframes[(step_start * 3 + 1).min(keyframes.len() - 1)];
+            let tangent_out_start = keyframes[(step_start * 3 + 2).min(keyframes.len() - 1)];
+            let tangent_in_end = keyframes[((step_start + 1) * 3).min(keyframes.len() - 1)];
+            let value_end = keyframes[((step_start + 1) * 3 + 1).min(keyframes.len() - 1)];
             let result = cubic_spline_interpolation(
                 value_start,
                 tangent_out_start,
@@ -900,19 +904,21 @@ fn apply_keyframe(
             transform.translation = transform.translation.lerp(result, weight);
         }
         (Interpolation::Step, Keyframes::Scale(keyframes)) => {
-            transform.scale = transform.scale.lerp(keyframes[step_start], weight);
+            transform.scale = transform
+                .scale
+                .lerp(keyframes[step_start.min(keyframes.len() - 1)], weight);
         }
         (Interpolation::Linear, Keyframes::Scale(keyframes)) => {
-            let scale_start = keyframes[step_start];
-            let scale_end = keyframes[step_start + 1];
+            let scale_start = keyframes[step_start.min(keyframes.len() - 1)];
+            let scale_end = keyframes[(step_start + 1).min(keyframes.len() - 1)];
             let result = scale_start.lerp(scale_end, lerp);
             transform.scale = transform.scale.lerp(result, weight);
         }
         (Interpolation::CubicSpline, Keyframes::Scale(keyframes)) => {
-            let value_start = keyframes[step_start * 3 + 1];
-            let tangent_out_start = keyframes[step_start * 3 + 2];
-            let tangent_in_end = keyframes[(step_start + 1) * 3];
-            let value_end = keyframes[(step_start + 1) * 3 + 1];
+            let value_start = keyframes[(step_start * 3 + 1).min(keyframes.len() - 1)];
+            let tangent_out_start = keyframes[(step_start * 3 + 2).min(keyframes.len() - 1)];
+            let tangent_in_end = keyframes[((step_start + 1) * 3).min(keyframes.len() - 1)];
+            let value_end = keyframes[((step_start + 1) * 3 + 1).min(keyframes.len() - 1)];
             let result = cubic_spline_interpolation(
                 value_start,
                 tangent_out_start,
