@@ -441,7 +441,7 @@ pub fn prepare_assets<A: RenderAsset>(
             if bpf.write_bytes(size) == 0 {
                 prepare_next_frame.assets.push((id, extracted_asset));
                 render_assets.remove(id);
-                break;
+                continue;
             }
         }
 
@@ -456,7 +456,6 @@ pub fn prepare_assets<A: RenderAsset>(
         }
     }
 
-    prepare_next_frame.assets.extend(extracted_assets);
     if bpf.exhausted() {
         debug!(
             "{} write budget exhausted with {} assets remaining (wrote {})",
