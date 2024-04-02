@@ -1,3 +1,5 @@
+use std::ffi::OsStr;
+
 use bevy_asset::{io::Reader, AssetLoader, AsyncReadExt, LoadContext};
 use bevy_ecs::prelude::{FromWorld, World};
 use bevy_log::warn;
@@ -96,7 +98,7 @@ impl AssetLoader for ImageLoader {
     ) -> bevy_utils::BoxedFuture<'a, Result<Image, Self::Error>> {
         Box::pin(async move {
             // use the file extension for the image type
-            let ext = load_context.path().extension().unwrap().to_str().unwrap();
+            let ext = load_context.path().extension().and_then(OsStr::to_str).unwrap_or("image");
 
             let mut bytes = Vec::new();
             reader.read_to_end(&mut bytes).await?;
