@@ -1,6 +1,6 @@
-use crate::{self as bevy_asset};
+use crate::{self as bevy_asset, HandleDropResult};
 use crate::{
-    Asset, AssetEvent, AssetHandleProvider, AssetId, AssetServer, Handle, LoadState, UntypedHandle,
+    Asset, AssetEvent, AssetHandleProvider, AssetId, AssetServer, Handle, UntypedHandle,
 };
 use bevy_ecs::{
     prelude::EventWriter,
@@ -504,23 +504,22 @@ impl<A: Asset> Assets<A> {
             let id = drop_event.id.typed();
 
             if drop_event.asset_server_managed {
-                let untyped_id = drop_event.id.untyped(TypeId::of::<A>());
-                if let Some(info) = infos.get(untyped_id) {
-                    if info.load_state == LoadState::Loading
-                        || info.load_state == LoadState::NotLoaded
-                    {
+                // the process_handle_drop call checks whether new handles have been created since the drop event was fired, before removing the asset
+                match infos.process_handle_drop(id.untyped(), &asset_server.data.asset_event_sender)
+                {
+                    // a new handle has been created, or the asset doesn't exist
+                    HandleDropResult::NotDropped => continue,
+                    // an load is in progress, refire the event for next frame
+                    HandleDropResult::CantDropYet => {
                         not_ready.push(drop_event);
                         continue;
                     }
+                    HandleDropResult::Dropped => (),
                 }
-                if infos.process_handle_drop(untyped_id) {
-                    assets.queued_events.push(AssetEvent::Unused { id });
-                    assets.remove_dropped(id);
-                }
-            } else {
-                assets.queued_events.push(AssetEvent::Unused { id });
-                assets.remove_dropped(id);
             }
+
+            assets.queued_events.push(AssetEvent::Unused { id });
+            assets.remove_dropped(id);
         }
 
         // TODO: this is _extremely_ inefficient find a better fix
