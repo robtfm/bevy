@@ -205,6 +205,14 @@ impl ShaderCache {
             capabilities |= Capabilities::CUBE_ARRAY_TEXTURES;
         }
 
+        if render_adapter
+            .get_downlevel_capabilities()
+            .flags
+            .contains(DownlevelFlags::MULTISAMPLED_SHADING)
+        {
+            capabilities |= Capabilities::MULTISAMPLED_SHADING;
+        }
+
         #[cfg(debug_assertions)]
         let composer = naga_oil::compose::Composer::default();
         #[cfg(not(debug_assertions))]
