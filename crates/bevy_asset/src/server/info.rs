@@ -710,15 +710,19 @@ impl AssetInfos {
                 // we need to ensure load tasks do not send results after we send the cancel (except on wasm where they cannot)
                 let sender = sender.lock_blocking();
 
-                drop(task);
-                let path = entry.get().path.clone().unwrap_or_default();
-                sender
-                    .send(InternalAssetEvent::Failed {
-                        id,
-                        path: path.clone(),
-                        error: AssetLoadError::Cancelled { path },
-                    })
-                    .unwrap();
+                if task.is_finished() {
+                    pending_load_tasks.insert(id, task);
+                } else {
+                    drop(task);
+                    let path = entry.get().path.clone().unwrap_or_default();
+                    sender
+                        .send(InternalAssetEvent::Failed {
+                            id,
+                            path: path.clone(),
+                            error: AssetLoadError::Cancelled { path },
+                        })
+                        .unwrap();    
+                }
             }
 
             return HandleDropResult::CantDropYet;
