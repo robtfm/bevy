@@ -6,6 +6,7 @@ use bevy_ecs::{
     prelude::EventWriter,
     system::{Res, ResMut, Resource},
 };
+use bevy_log::error;
 use bevy_reflect::{Reflect, TypePath};
 use bevy_utils::{HashMap, Uuid};
 use crossbeam_channel::{Receiver, Sender};
@@ -147,7 +148,8 @@ impl<A: Asset> DenseAssetStorage<A> {
                 })
             }
         } else {
-            unreachable!("entries should always be valid after a flush");
+            error!("entries should always be valid after a flush");
+            Ok(false)
         }
     }
 
