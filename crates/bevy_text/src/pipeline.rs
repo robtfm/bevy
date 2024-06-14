@@ -87,6 +87,13 @@ impl TextPipeline {
 
         let size = compute_text_bounds(&section_glyphs, |index| scaled_fonts[index]).size();
 
+        let h_anchor = bounds.x
+            * match text_alignment {
+                JustifyText::Left => 0.0,
+                JustifyText::Center => 0.5,
+                JustifyText::Right => 1.0,
+            };
+
         let glyphs = self.brush.process_glyphs(
             section_glyphs,
             &sections,
@@ -96,6 +103,7 @@ impl TextPipeline {
             textures,
             text_settings,
             y_axis_orientation,
+            h_anchor,
         )?;
 
         Ok(TextLayoutInfo {
