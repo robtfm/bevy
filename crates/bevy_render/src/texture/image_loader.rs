@@ -98,7 +98,11 @@ impl AssetLoader for ImageLoader {
     ) -> bevy_utils::BoxedFuture<'a, Result<Image, Self::Error>> {
         Box::pin(async move {
             // use the file extension for the image type
-            let ext = load_context.path().extension().and_then(OsStr::to_str).unwrap_or("image");
+            let ext = load_context
+                .path()
+                .extension()
+                .and_then(OsStr::to_str)
+                .unwrap_or("image");
 
             let mut bytes = Vec::new();
             reader.read_to_end(&mut bytes).await?;

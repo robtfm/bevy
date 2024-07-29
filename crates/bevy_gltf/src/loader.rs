@@ -1206,7 +1206,10 @@ fn primitive_label(mesh: &gltf::Mesh, primitive: &Primitive) -> String {
 }
 
 fn primitive_name(mesh: &gltf::Mesh, primitive: &Primitive) -> String {
-    let mesh_name = mesh.name().map(ToOwned::to_owned).unwrap_or_else(|| format!("Mesh{}", mesh.index()));
+    let mesh_name = mesh
+        .name()
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| format!("Mesh{}", mesh.index()));
     if mesh.primitives().len() > 1 {
         format!("{}/Primitive{}", mesh_name, primitive.index())
     } else {
@@ -1274,7 +1277,9 @@ fn scene_label(scene: &gltf::Scene) -> String {
 }
 
 fn skin_label(skin: &gltf::Skin) -> String {
-    skin.name().map(ToOwned::to_owned).unwrap_or_else(|| format!("Skin{}", skin.index()))
+    skin.name()
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| format!("Skin{}", skin.index()))
 }
 
 /// Extracts the texture sampler data from the glTF texture.

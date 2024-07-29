@@ -1,7 +1,5 @@
 use crate::{self as bevy_asset, HandleDropResult};
-use crate::{
-    Asset, AssetEvent, AssetHandleProvider, AssetId, AssetServer, Handle, UntypedHandle,
-};
+use crate::{Asset, AssetEvent, AssetHandleProvider, AssetId, AssetServer, Handle, UntypedHandle};
 use bevy_ecs::{
     prelude::EventWriter,
     system::{Res, ResMut, Resource},

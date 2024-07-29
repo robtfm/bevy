@@ -2,13 +2,20 @@ mod info;
 mod loaders;
 
 use crate::{
-    folder::LoadedFolder, io::{
+    folder::LoadedFolder,
+    io::{
         AssetReader, AssetReaderError, AssetSource, AssetSourceEvent, AssetSourceId, AssetSources,
         MissingAssetSourceError, MissingProcessedAssetReaderError, Reader,
-    }, loader::{AssetLoader, ErasedAssetLoader, LoadContext, LoadedAsset}, meta::{
+    },
+    loader::{AssetLoader, ErasedAssetLoader, LoadContext, LoadedAsset},
+    meta::{
         loader_settings_meta_transform, AssetActionMinimal, AssetMetaDyn, AssetMetaMinimal,
         MetaTransform, Settings,
-    }, path::AssetPath, Asset, AssetEvent, AssetHandleProvider, AssetId, AssetLoadFailedEvent, AssetMetaCheck, Assets, DeserializeMetaError, ErasedLoadedAsset, Handle, LabeledAsset, LoadedUntypedAsset, UntypedAssetId, UntypedAssetLoadFailedEvent, UntypedHandle
+    },
+    path::AssetPath,
+    Asset, AssetEvent, AssetHandleProvider, AssetId, AssetLoadFailedEvent, AssetMetaCheck, Assets,
+    DeserializeMetaError, ErasedLoadedAsset, Handle, LabeledAsset, LoadedUntypedAsset,
+    UntypedAssetId, UntypedAssetLoadFailedEvent, UntypedHandle,
 };
 use bevy_ecs::prelude::*;
 use bevy_log::{error, info};
@@ -16,12 +23,12 @@ use bevy_tasks::IoTaskPool;
 use bevy_utils::{CowArc, HashMap, HashSet};
 use crossbeam_channel::{Receiver, Sender};
 use futures_lite::{FutureExt, StreamExt};
+pub(crate) use info::HandleDropResult;
 use info::*;
 use loaders::*;
 use parking_lot::RwLock;
-use std::{panic::AssertUnwindSafe, path::PathBuf};
-pub(crate) use info::HandleDropResult;
 use std::{any::TypeId, path::Path, sync::Arc};
+use std::{panic::AssertUnwindSafe, path::PathBuf};
 use thiserror::Error;
 
 /// Loads and tracks the state of [`Asset`] values from a configured [`AssetReader`]. This can be used to kick off new asset loads and
@@ -337,7 +344,7 @@ impl AssetServer {
                         error!("{}", err);
                     }
                 },
-            )        
+            )
     }
 
     /// Asynchronously load an asset that you do not know the type of statically. If you _do_ know the type of the asset,
@@ -384,8 +391,7 @@ impl AssetServer {
                 CowArc::Owned(format!("{source}--{UNTYPED_SOURCE_SUFFIX}").into())
             }
         });
-        self
-            .data
+        self.data
             .infos
             .write()
             .get_or_create_path_handle_and_load::<LoadedUntypedAsset, _>(
@@ -395,7 +401,7 @@ impl AssetServer {
                 |handle| async move {
                     drop(handle);
                     let _ = server.load_untyped_async(path).await;
-                }
+                },
             )
     }
 
@@ -535,7 +541,8 @@ impl AssetServer {
                     handle.unwrap()
                 };
 
-                self.send_loaded_asset_async(base_handle.id(), loaded_asset).await;
+                self.send_loaded_asset_async(base_handle.id(), loaded_asset)
+                    .await;
                 Ok(final_handle)
             }
             Err(err) => {
@@ -543,7 +550,8 @@ impl AssetServer {
                     id: base_handle.id(),
                     error: err.clone(),
                     path: path.into_owned(),
-                }).await;
+                })
+                .await;
                 Err(err)
             }
         }
@@ -578,7 +586,7 @@ impl AssetServer {
             .send(InternalAssetEvent::Loaded { id, loaded_asset })
             .unwrap();
     }
-    
+
     /// Kicks off a reload of the asset stored at the given path. This will only reload the asset if it currently loaded.
     pub fn reload<'a>(&self, path: impl Into<AssetPath<'a>>) {
         let server = self.clone();
@@ -1068,18 +1076,18 @@ impl AssetServer {
         let asset_path = asset_path.clone_owned();
         let load_context =
             LoadContext::new(self, asset_path.clone(), load_dependencies, populate_hashes);
-        AssertUnwindSafe(loader.load(reader, meta, load_context)).catch_unwind().await
-        .map_err(|_| AssetLoadError::AssetLoaderPanic {
-            path: asset_path.clone_owned(),
-            loader_name: loader.type_name(),
-        })?
-        .map_err(|e| {
-            AssetLoadError::AssetLoaderError {
+        AssertUnwindSafe(loader.load(reader, meta, load_context))
+            .catch_unwind()
+            .await
+            .map_err(|_| AssetLoadError::AssetLoaderPanic {
+                path: asset_path.clone_owned(),
+                loader_name: loader.type_name(),
+            })?
+            .map_err(|e| AssetLoadError::AssetLoaderError {
                 path: asset_path.clone_owned(),
                 loader_name: loader.type_name(),
                 error: e.into(),
-            }
-        })
+            })
     }
 }
 
@@ -1307,7 +1315,7 @@ pub enum AssetLoadError {
     AssetLoaderPanic {
         path: AssetPath<'static>,
         loader_name: &'static str,
-    },    
+    },
     #[error("Failed to load asset '{path}' with asset loader '{loader_name}': {error}")]
     AssetLoaderError {
         path: AssetPath<'static>,

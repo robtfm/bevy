@@ -1,5 +1,8 @@
 use crate::{
-    meta::{AssetHash, MetaTransform}, Asset, AssetHandleProvider, AssetLoadError, AssetPath, DependencyLoadState, ErasedLoadedAsset, Handle, InternalAssetEvent, InternalAssetEventSender, LoadState, RecursiveDependencyLoadState, StrongHandle, UntypedAssetId, UntypedHandle
+    meta::{AssetHash, MetaTransform},
+    Asset, AssetHandleProvider, AssetLoadError, AssetPath, DependencyLoadState, ErasedLoadedAsset,
+    Handle, InternalAssetEvent, InternalAssetEventSender, LoadState, RecursiveDependencyLoadState,
+    StrongHandle, UntypedAssetId, UntypedHandle,
 };
 use bevy_ecs::world::World;
 use bevy_log::warn;
@@ -198,7 +201,7 @@ impl AssetInfos {
 
         handle
     }
-        
+
     pub(crate) fn get_or_create_path_handle_untyped(
         &mut self,
         path: AssetPath<'static>,
@@ -394,7 +397,11 @@ impl AssetInfos {
     }
 
     // Returns `true` if the asset should be removed from the collection
-    pub(crate) fn process_handle_drop(&mut self, id: UntypedAssetId, sender: &InternalAssetEventSender) -> HandleDropResult {
+    pub(crate) fn process_handle_drop(
+        &mut self,
+        id: UntypedAssetId,
+        sender: &InternalAssetEventSender,
+    ) -> HandleDropResult {
         Self::process_handle_drop_internal(
             &mut self.infos,
             &mut self.path_to_id,
@@ -472,7 +479,8 @@ impl AssetInfos {
 
         let rec_dep_load_state = match (loading_rec_deps.len(), failed_rec_deps.len()) {
             (0, 0) => {
-                sender.lock_blocking()
+                sender
+                    .lock_blocking()
                     .send(InternalAssetEvent::LoadedWithDependencies {
                         id: loaded_asset_id,
                     })
@@ -721,7 +729,7 @@ impl AssetInfos {
                             path: path.clone(),
                             error: AssetLoadError::Cancelled { path },
                         })
-                        .unwrap();    
+                        .unwrap();
                 }
             }
 

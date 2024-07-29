@@ -380,8 +380,8 @@ pub fn derive_as_bind_group(ast: syn::DeriveInput) -> Result<TokenStream> {
                                         return Err(#render_path::render_resource::AsBindGroupError::InvalidData(
                                             format!(
                                                 "binding index {}: no sampler for format `{:?}`", 
-                                                #binding_index, 
-                                                image.texture_format, 
+                                                #binding_index,
+                                                image.texture_format,
                                             )
                                         ));
                                     };
@@ -392,8 +392,8 @@ pub fn derive_as_bind_group(ast: syn::DeriveInput) -> Result<TokenStream> {
                                         return Err(#render_path::render_resource::AsBindGroupError::InvalidData(
                                             format!(
                                                 "binding index {}: image sampler type `{:?}` must be one of `{:?}`", 
-                                                #binding_index, 
-                                                sample_type, 
+                                                #binding_index,
+                                                sample_type,
                                                 #expected_samplers
                                             )
                                         ));
