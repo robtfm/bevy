@@ -2365,6 +2365,17 @@ category = "UI (User Interface)"
 wasm = true
 
 [[example]]
+name = "interactive_texture"
+path = "examples/ui/interactive_texture.rs"
+doc-scrape-examples = true
+
+[package.metadata.example.interactive_texture]
+name = "Interactive UI Texture"
+description = "An example of making interactive UI as a part of a 3D world"
+category = "UI (User Interface)"
+wasm = true
+
+[[example]]
 name = "size_constraints"
 path = "examples/ui/size_constraints.rs"
 doc-scrape-examples = true
