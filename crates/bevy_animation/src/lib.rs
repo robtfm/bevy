@@ -589,10 +589,13 @@ pub fn animation_player(
     animation_players
         .par_iter_mut()
         .for_each(|(root, maybe_parent, mut player)| {
-            update_transitions(&mut player, &time);
+            let is_changed = player.is_changed();
+            let player = player.bypass_change_detection();
+            update_transitions(player, &time);
             run_animation_player(
                 root,
                 player,
+                is_changed,
                 &time,
                 &animations,
                 &names,
@@ -608,7 +611,8 @@ pub fn animation_player(
 #[allow(clippy::too_many_arguments)]
 fn run_animation_player(
     root: Entity,
-    mut player: Mut<AnimationPlayer>,
+    player: &mut AnimationPlayer,
+    is_changed: bool,
     time: &Time,
     animations: &Assets<AnimationClip>,
     names: &Query<&Name>,
@@ -634,7 +638,7 @@ fn run_animation_player(
     let paused = player.paused;
     // Continue if paused unless the `AnimationPlayer` was changed
     // This allow the animation to still be updated if the player.elapsed field was manually updated in pause
-    if paused && !player.is_changed() {
+    if paused && !is_changed {
         return;
     }
 
