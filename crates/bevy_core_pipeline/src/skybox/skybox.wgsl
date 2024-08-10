@@ -58,11 +58,11 @@ struct VertexOutput {
 fn skybox_vertex(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     // See the explanation above for how this works.
     let clip_position = vec4(
-        f32(vertex_index & 1u),
-        f32((vertex_index >> 1u) & 1u),
-        0.25,
-        0.5
-    ) * 4.0 - vec4(1.0);
+        f32(vertex_index & 1u) * 4.0 - 1.0,
+        f32((vertex_index >> 1u) & 1u) * 4.0 - 1.0,
+        0.0002,
+        1.0
+    );
 
     return VertexOutput(clip_position);
 }
