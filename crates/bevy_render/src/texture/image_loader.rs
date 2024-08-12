@@ -1,3 +1,5 @@
+use std::ffi::OsStr;
+
 use bevy_asset::{io::Reader, AssetLoader, AsyncReadExt, LoadContext};
 use bevy_ecs::prelude::{FromWorld, World};
 use thiserror::Error;
@@ -97,7 +99,7 @@ impl AssetLoader for ImageLoader {
         let image_type = match settings.format {
             ImageFormatSetting::FromExtension => {
                 // use the file extension for the image type
-                let ext = load_context.path().extension().unwrap().to_str().unwrap();
+                let ext = load_context.path().extension().and_then(OsStr::to_str).unwrap_or("image");
                 ImageType::Extension(ext)
             }
             ImageFormatSetting::Format(format) => ImageType::Format(format),
