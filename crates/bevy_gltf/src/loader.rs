@@ -1469,11 +1469,11 @@ fn load_node(
 }
 
 fn primitive_name(mesh: &gltf::Mesh, primitive: &Primitive) -> String {
-    let mesh_name = mesh.name().unwrap_or("Mesh");
+    let mesh_name = mesh.name().map(ToOwned::to_owned).unwrap_or_else(|| format!("Mesh{}", mesh.index()));
     if mesh.primitives().len() > 1 {
-        format!("{}.{}", mesh_name, primitive.index())
+        format!("{}/Primitive{}", mesh_name, primitive.index())
     } else {
-        mesh_name.to_string()
+        mesh_name
     }
 }
 
