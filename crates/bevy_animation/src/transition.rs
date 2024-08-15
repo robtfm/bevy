@@ -54,11 +54,11 @@ impl Clone for AnimationTransitions {
 #[derive(Debug, Clone, Copy, Reflect)]
 pub struct AnimationTransition {
     /// The current weight. Starts at 1.0 and goes to 0.0 during the fade-out.
-    current_weight: f32,
+    pub current_weight: f32,
     /// How much to decrease `current_weight` per second
-    weight_decline_per_sec: f32,
+    pub weight_decline_per_sec: f32,
     /// The animation that is being faded out
-    animation: AnimationNodeIndex,
+    pub animation: AnimationNodeIndex,
 }
 
 impl AnimationTransitions {
@@ -92,13 +92,22 @@ impl AnimationTransitions {
             }
         }
 
-        self.main_animation = Some(new_animation);
+        // If already transitioning away from this animation, cancel the transition.
+        // Otherwise the transition ending would incorrectly stop the new animation.
+        self.transitions
+            .retain(|transition| transition.animation != new_animation);
+        
         player.start(new_animation)
     }
 
     /// Obtain the currently playing main animation.
     pub fn get_main_animation(&self) -> Option<AnimationNodeIndex> {
         self.main_animation
+    }
+
+    /// Iterator over animations currently being transitioned out
+    pub fn get_transitions(&self) -> impl Iterator<Item=&AnimationTransition> {
+        self.transitions.iter()
     }
 }
 
