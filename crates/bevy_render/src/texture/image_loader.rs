@@ -51,9 +51,9 @@ pub(crate) const IMG_FILE_EXTENSIONS: &[&str] = &[
 
 #[derive(Serialize, Deserialize, Default, Debug)]
 pub enum ImageFormatSetting {
-    #[default]
     FromExtension,
     Format(ImageFormat),
+    #[default]
     Guess,
 }
 
