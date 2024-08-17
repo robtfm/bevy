@@ -54,8 +54,7 @@ use bevy_app::prelude::*;
 use bevy_ecs::prelude::*;
 use bevy_input::InputSystem;
 use bevy_render::{
-    view::{check_visibility, VisibilitySystems},
-    RenderApp,
+    camera::CameraUpdateSystem, view::{check_visibility, VisibilitySystems}, RenderApp
 };
 use bevy_transform::TransformSystem;
 use layout::ui_surface::UiSurface;
@@ -143,6 +142,7 @@ impl Plugin for UiPlugin {
                     .after(update_target_camera_system)
                     .before(UiSystem::Layout),
                 ui_layout_system
+                    .after(CameraUpdateSystem)
                     .in_set(UiSystem::Layout)
                     .before(TransformSystem::TransformPropagate),
                 resolve_outlines_system
