@@ -167,6 +167,7 @@ impl Plugin for UiPlugin {
                     .chain()
                     .in_set(UiSystem::Prepare),
                 ui_layout_system
+                    .after(CameraUpdateSystem)
                     .in_set(UiSystem::Layout)
                     .before(TransformSystem::TransformPropagate),
                 resolve_outlines_system
