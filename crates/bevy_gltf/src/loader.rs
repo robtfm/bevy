@@ -38,10 +38,10 @@ use bevy_render::{
 };
 use bevy_scene::Scene;
 #[cfg(not(target_arch = "wasm32"))]
-use bevy_tasks::IoTaskPool;
 use bevy_transform::components::Transform;
 use bevy_utils::tracing::{error, info_span, warn};
 use bevy_utils::{HashMap, HashSet};
+use futures::future::join_all;
 use gltf::image::Source;
 use gltf::{
     accessor::Iter,
@@ -389,25 +389,22 @@ async fn load_gltf<'a, 'b, 'c>(
         }
     } else {
         #[cfg(not(target_arch = "wasm32"))]
-        IoTaskPool::get()
-            .scope(|scope| {
-                gltf.textures().for_each(|gltf_texture| {
-                    let parent_path = load_context.path().parent().unwrap();
-                    let linear_textures = &linear_textures;
-                    let buffer_data = &buffer_data;
-                    scope.spawn(async move {
-                        load_image(
-                            gltf_texture,
-                            buffer_data,
-                            linear_textures,
-                            parent_path,
-                            loader.supported_compressed_formats,
-                            settings.load_materials,
-                        )
-                        .await
-                    });
-                });
-            })
+        let futures = gltf.textures().map(|gltf_texture| {
+            let parent_path = load_context.path().parent().unwrap();
+            let linear_textures = &linear_textures;
+            let buffer_data = &buffer_data;
+            load_image(
+                gltf_texture,
+                buffer_data,
+                linear_textures,
+                parent_path,
+                loader.supported_compressed_formats,
+                settings.load_materials,
+            )
+        });
+
+        join_all(futures)
+            .await
             .into_iter()
             .for_each(|result| match result {
                 Ok(image) => {
@@ -1469,7 +1466,10 @@ fn load_node(
 }
 
 fn primitive_name(mesh: &gltf::Mesh, primitive: &Primitive) -> String {
-    let mesh_name = mesh.name().map(ToOwned::to_owned).unwrap_or_else(|| format!("Mesh{}", mesh.index()));
+    let mesh_name = mesh
+        .name()
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| format!("Mesh{}", mesh.index()));
     if mesh.primitives().len() > 1 {
         format!("{}/Primitive{}", mesh_name, primitive.index())
     } else {
