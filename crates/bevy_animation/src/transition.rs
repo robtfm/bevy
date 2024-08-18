@@ -96,7 +96,7 @@ impl AnimationTransitions {
         // Otherwise the transition ending would incorrectly stop the new animation.
         self.transitions
             .retain(|transition| transition.animation != new_animation);
-        
+
         player.start(new_animation)
     }
 
@@ -106,7 +106,7 @@ impl AnimationTransitions {
     }
 
     /// Iterator over animations currently being transitioned out
-    pub fn get_transitions(&self) -> impl Iterator<Item=&AnimationTransition> {
+    pub fn get_transitions(&self) -> impl Iterator<Item = &AnimationTransition> {
         self.transitions.iter()
     }
 }

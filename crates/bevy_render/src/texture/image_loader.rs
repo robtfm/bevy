@@ -100,7 +100,11 @@ impl AssetLoader for ImageLoader {
         let image_type = match settings.format {
             ImageFormatSetting::FromExtension => {
                 // use the file extension for the image type
-                let ext = load_context.path().extension().and_then(OsStr::to_str).unwrap_or("image");
+                let ext = load_context
+                    .path()
+                    .extension()
+                    .and_then(OsStr::to_str)
+                    .unwrap_or("image");
                 ImageType::Extension(ext)
             }
             ImageFormatSetting::Format(format) => ImageType::Format(format),
