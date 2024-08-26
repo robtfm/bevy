@@ -9,6 +9,7 @@ mod reader;
 mod registry;
 mod update;
 mod writer;
+mod fire_event;
 
 pub(crate) use base::EventInstance;
 pub use base::{Event, EventId};
@@ -23,6 +24,7 @@ pub use mut_iterators::EventMutParIter;
 pub use mut_iterators::{EventMutIterator, EventMutIteratorWithId};
 pub use mutator::EventMutator;
 pub use reader::EventReader;
+pub use fire_event::FireEventEx;
 pub use registry::{EventRegistry, ShouldUpdateEvents};
 pub use update::{
     event_update_condition, event_update_system, signal_event_update_system, EventUpdates,
