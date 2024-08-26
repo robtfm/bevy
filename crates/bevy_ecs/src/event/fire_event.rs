@@ -1,4 +1,7 @@
-use crate::{system::Commands, world::{Command, World}};
+use crate::{
+    system::Commands,
+    world::{Command, World},
+};
 
 use super::{Event, Events};
 

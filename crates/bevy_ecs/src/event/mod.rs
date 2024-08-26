@@ -2,6 +2,7 @@
 mod base;
 mod collections;
 mod event_cursor;
+mod fire_event;
 mod iterators;
 mod mut_iterators;
 mod mutator;
@@ -9,13 +10,13 @@ mod reader;
 mod registry;
 mod update;
 mod writer;
-mod fire_event;
 
 pub(crate) use base::EventInstance;
 pub use base::{Event, EventId};
 pub use bevy_ecs_macros::Event;
 pub use collections::{Events, SendBatchIds};
 pub use event_cursor::EventCursor;
+pub use fire_event::FireEventEx;
 #[cfg(feature = "multi_threaded")]
 pub use iterators::EventParIter;
 pub use iterators::{EventIterator, EventIteratorWithId};
@@ -24,7 +25,6 @@ pub use mut_iterators::EventMutParIter;
 pub use mut_iterators::{EventMutIterator, EventMutIteratorWithId};
 pub use mutator::EventMutator;
 pub use reader::EventReader;
-pub use fire_event::FireEventEx;
 pub use registry::{EventRegistry, ShouldUpdateEvents};
 pub use update::{
     event_update_condition, event_update_system, signal_event_update_system, EventUpdates,
