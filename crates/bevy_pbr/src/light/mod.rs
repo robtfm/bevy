@@ -9,8 +9,8 @@ use bevy_render::{
     mesh::Mesh,
     primitives::{Aabb, CascadesFrusta, CubemapFrusta, Frustum, Sphere},
     view::{
-        InheritedVisibility, RenderLayers, ViewVisibility, VisibilityRange, VisibleEntities,
-        VisibleEntityRanges, WithMesh,
+        InheritedVisibility, NoFrustumCulling, RenderLayers, ViewVisibility, VisibilityRange,
+        VisibleEntities, VisibleEntityRanges, WithMesh,
     },
 };
 use bevy_transform::components::{GlobalTransform, Transform};
@@ -673,6 +673,7 @@ pub fn check_light_mesh_visibility(
             Option<&Aabb>,
             Option<&GlobalTransform>,
             Has<VisibilityRange>,
+            Has<NoFrustumCulling>,
         ),
         (
             Without<NotShadowCaster>,
@@ -742,6 +743,7 @@ pub fn check_light_mesh_visibility(
             maybe_aabb,
             maybe_transform,
             has_visibility_range,
+            has_no_frustum_culling,
         ) in &mut visible_entity_query
         {
             if !inherited_visibility.get() {
@@ -774,7 +776,9 @@ pub fn check_light_mesh_visibility(
                         view_frusta.iter().zip(view_visible_entities)
                     {
                         // Disable near-plane culling, as a shadow caster could lie before the near plane.
-                        if !frustum.intersects_obb(aabb, &transform.affine(), false, true) {
+                        if !has_no_frustum_culling
+                            && !frustum.intersects_obb(aabb, &transform.affine(), false, true)
+                        {
                             continue;
                         }
 
@@ -836,6 +840,7 @@ pub fn check_light_mesh_visibility(
                     maybe_aabb,
                     maybe_transform,
                     has_visibility_range,
+                    has_no_frustum_culling,
                 ) in &mut visible_entity_query
                 {
                     if !inherited_visibility.get() {
@@ -860,7 +865,9 @@ pub fn check_light_mesh_visibility(
                     if let (Some(aabb), Some(transform)) = (maybe_aabb, maybe_transform) {
                         let model_to_world = transform.affine();
                         // Do a cheap sphere vs obb test to prune out most meshes outside the sphere of the light
-                        if !light_sphere.intersects_obb(aabb, &model_to_world) {
+                        if !has_no_frustum_culling
+                            && !light_sphere.intersects_obb(aabb, &model_to_world)
+                        {
                             continue;
                         }
 
@@ -868,7 +875,9 @@ pub fn check_light_mesh_visibility(
                             .iter()
                             .zip(cubemap_visible_entities.iter_mut())
                         {
-                            if frustum.intersects_obb(aabb, &model_to_world, true, true) {
+                            if has_no_frustum_culling
+                                || frustum.intersects_obb(aabb, &model_to_world, true, true)
+                            {
                                 view_visibility.set();
                                 visible_entities.push::<WithMesh>(entity);
                             }
@@ -911,6 +920,7 @@ pub fn check_light_mesh_visibility(
                     maybe_aabb,
                     maybe_transform,
                     has_visibility_range,
+                    has_no_frustum_culling,
                 ) in &mut visible_entity_query
                 {
                     if !inherited_visibility.get() {
@@ -935,11 +945,15 @@ pub fn check_light_mesh_visibility(
                     if let (Some(aabb), Some(transform)) = (maybe_aabb, maybe_transform) {
                         let model_to_world = transform.affine();
                         // Do a cheap sphere vs obb test to prune out most meshes outside the sphere of the light
-                        if !light_sphere.intersects_obb(aabb, &model_to_world) {
+                        if !has_no_frustum_culling
+                            && !light_sphere.intersects_obb(aabb, &model_to_world)
+                        {
                             continue;
                         }
 
-                        if frustum.intersects_obb(aabb, &model_to_world, true, true) {
+                        if has_no_frustum_culling
+                            || frustum.intersects_obb(aabb, &model_to_world, true, true)
+                        {
                             view_visibility.set();
                             visible_entities.push::<WithMesh>(entity);
                         }
