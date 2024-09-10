@@ -20,7 +20,6 @@ pub struct ImageLoader {
 }
 
 pub(crate) const IMG_FILE_EXTENSIONS: &[&str] = &[
-    "image",
     #[cfg(feature = "basis-universal")]
     "basis",
     #[cfg(feature = "bmp")]
