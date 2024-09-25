@@ -75,6 +75,10 @@ pub enum AssetServerMode {
 }
 
 impl AssetServer {
+    pub fn get_tasks(&self) -> Vec<UntypedAssetId> {
+        self.data.infos.read().pending_tasks.keys().cloned().collect()
+    }
+
     /// Create a new instance of [`AssetServer`]. If `watch_for_changes` is true, the [`AssetReader`] storage will watch for changes to
     /// asset sources and hot-reload them.
     pub fn new(sources: AssetSources, mode: AssetServerMode, watching_for_changes: bool) -> Self {
