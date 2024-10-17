@@ -28,22 +28,22 @@ use thiserror::Error;
 pub struct Node {
     /// The order of the node in the UI layout.
     /// Nodes with a higher stack index are drawn on top of and receive interactions before nodes with lower stack indices.
-    pub(crate) stack_index: u32,
+    pub stack_index: u32,
     /// The size of the node as width and height in logical pixels
     ///
     /// automatically calculated by [`super::layout::ui_layout_system`]
-    pub(crate) calculated_size: Vec2,
+    pub calculated_size: Vec2,
     /// The width of this node's outline.
     /// If this value is `Auto`, negative or `0.` then no outline will be rendered.
     ///
     /// Automatically calculated by [`super::layout::resolve_outlines_system`].
-    pub(crate) outline_width: f32,
+    pub outline_width: f32,
     /// The amount of space between the outline and the edge of the node.
-    pub(crate) outline_offset: f32,
+    pub outline_offset: f32,
     /// The unrounded size of the node as width and height in logical pixels.
     ///
     /// Automatically calculated by [`super::layout::ui_layout_system`].
-    pub(crate) unrounded_size: Vec2,
+    pub unrounded_size: Vec2,
 }
 
 impl Node {
