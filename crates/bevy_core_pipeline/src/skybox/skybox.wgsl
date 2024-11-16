@@ -60,7 +60,7 @@ fn skybox_vertex(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     let clip_position = vec4(
         f32(vertex_index & 1u) * 4.0 - 1.0,
         f32((vertex_index >> 1u) & 1u) * 4.0 - 1.0,
-        0.0002,
+        0.00001,
         1.0
     );
 
