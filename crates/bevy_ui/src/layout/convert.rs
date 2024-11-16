@@ -154,6 +154,9 @@ pub fn from_style(
             .collect::<Vec<_>>(),
         grid_row: style.grid_row.into(),
         grid_column: style.grid_column.into(),
+        item_is_table: Default::default(),
+        box_sizing: Default::default(),
+        text_align: Default::default(),
     }
 }
 
