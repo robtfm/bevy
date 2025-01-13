@@ -328,6 +328,9 @@ impl Plugin for PbrPlugin {
                 VolumetricFogPlugin,
                 ScreenSpaceReflectionsPlugin,
             ))
+            .add_plugins(
+                ExtractComponentPlugin::<AmbientLight>::default(),
+            )
             .configure_sets(
                 PostUpdate,
                 (
