@@ -251,18 +251,19 @@ impl<T: Event> ApplicationHandler<T> for WinitAppRunnerState<T> {
             WindowEvent::CursorMoved { position, .. } => {
                 let physical_position = DVec2::new(position.x, position.y);
 
-                let last_position = win.physical_cursor_position();
-                let delta = last_position.map(|last_pos| {
-                    (physical_position.as_vec2() - last_pos) / win.resolution.scale_factor()
-                });
-
-                win.set_physical_cursor_position(Some(physical_position));
-                let position = (physical_position / win.resolution.scale_factor() as f64).as_vec2();
-                self.winit_events.send(CursorMoved {
-                    window,
-                    position,
-                    delta,
-                });
+                if win.set_backend_cursor_position(Some(physical_position)) {
+                    let last_position = win.physical_cursor_position();
+                    let delta = last_position.map(|last_pos| {
+                        (physical_position.as_vec2() - last_pos) / win.resolution.scale_factor()
+                    });
+    
+                    let position = (physical_position / win.resolution.scale_factor() as f64).as_vec2();
+                    self.winit_events.send(CursorMoved {
+                        window,
+                        position,
+                        delta,
+                    });    
+                }
             }
             WindowEvent::CursorEntered { .. } => {
                 self.winit_events.send(CursorEntered { window });

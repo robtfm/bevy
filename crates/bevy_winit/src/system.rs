@@ -267,7 +267,11 @@ pub(crate) fn changed_windows(
             }
         }
 
-        if window.physical_cursor_position() != cache.window.physical_cursor_position() {
+        if window.cursor.grab_mode != cache.window.cursor.grab_mode {
+            crate::winit_windows::attempt_grab(winit_window, window.cursor.grab_mode);
+        }
+
+        if window.physical_cursor_position() != cache.window.backend_cursor_position() {
             if let Some(physical_position) = window.physical_cursor_position() {
                 let position = PhysicalPosition::new(physical_position.x, physical_position.y);
 
@@ -279,10 +283,6 @@ pub(crate) fn changed_windows(
 
         if window.cursor.icon != cache.window.cursor.icon {
             winit_window.set_cursor(converters::convert_cursor_icon(window.cursor.icon));
-        }
-
-        if window.cursor.grab_mode != cache.window.cursor.grab_mode {
-            crate::winit_windows::attempt_grab(winit_window, window.cursor.grab_mode);
         }
 
         if window.cursor.visible != cache.window.cursor.visible {

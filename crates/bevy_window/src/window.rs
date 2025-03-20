@@ -465,6 +465,44 @@ impl Window {
     pub fn set_physical_cursor_position(&mut self, position: Option<DVec2>) {
         self.internal.physical_cursor_position = position;
     }
+
+    /// Set the cursor position reported by the backend in physical pixels.
+    ///
+    /// This function is usually only called from the winit event loop.
+    /// If the cursor grab mode is currently `CursorGrabMode::Locked` this will
+    /// prompt the window change system to reapply the current physical position
+    /// to the backend.
+    /// If the cursor grab mode is anything else, this updates both the 
+    /// backend position and the physical cursor position.
+    /// Returns true if the backend update is accepted.
+    pub fn set_backend_cursor_position(&mut self, position: Option<DVec2>) -> bool {
+        self.internal.backend_cursor_position = position;
+        let update = self.cursor.grab_mode != CursorGrabMode::Locked;
+        if update {
+            self.internal.physical_cursor_position = position;
+        }
+        update
+    }
+
+    /// Retrieves the cursor position in the back end.
+    /// This can be different to the phyical cursor position on
+    /// windows when `CursorGrabMode::Locked` is set.
+    pub fn backend_cursor_position(&self) -> Option<Vec2> {
+        match self.internal.backend_cursor_position {
+            Some(position) => {
+                if position.x >= 0.
+                    && position.y >= 0.
+                    && position.x < self.physical_width() as f64
+                    && position.y < self.physical_height() as f64
+                {
+                    Some(position.as_vec2())
+                } else {
+                    None
+                }
+            }
+            None => None,
+        }
+    }
 }
 
 /// The size limits on a [`Window`].
@@ -910,6 +948,8 @@ pub struct InternalWindowState {
     maximize_request: Option<bool>,
     /// Unscaled cursor position.
     physical_cursor_position: Option<DVec2>,
+    /// Cursor position reported by the backend
+    backend_cursor_position: Option<DVec2>,
 }
 
 impl InternalWindowState {
