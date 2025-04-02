@@ -120,7 +120,7 @@ fn setup(
                             align_items: AlignItems::Center,
                             ..default()
                         },
-                        border_color: BorderColor(Color::BLACK),
+                        border_color: BorderColor::all(Color::BLACK),
                         background_color: NORMAL_BUTTON.into(),
                         ..default()
                     })
@@ -243,17 +243,17 @@ fn button_system(
             Interaction::Pressed => {
                 text.sections[0].value = "Press".to_string();
                 *color = PRESSED_BUTTON.into();
-                border_color.0 = RED.into();
+                *border_color = BorderColor::all(RED);
             }
             Interaction::Hovered => {
                 text.sections[0].value = "Hover".to_string();
                 *color = HOVERED_BUTTON.into();
-                border_color.0 = WHITE.into();
+                *border_color = BorderColor::all(WHITE);
             }
             Interaction::None => {
                 text.sections[0].value = "Button".to_string();
                 *color = NORMAL_BUTTON.into();
-                border_color.0 = BLACK.into();
+                *border_color = BorderColor::all(BLACK);
             }
         }
     }

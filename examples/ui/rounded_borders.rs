@@ -139,7 +139,12 @@ fn setup(mut commands: Commands) {
                         ..Default::default()
                     },
                     background_color: MAROON.into(),
-                    border_color: RED.into(),
+                    border_color: BorderColor {
+                        top: WHITE.into(),
+                        bottom: YELLOW.into(),
+                        left: GREEN.into(),
+                        right: BLUE.into(),
+                    },
                     border_radius,
                     ..Default::default()
                 },
@@ -173,4 +178,37 @@ fn setup(mut commands: Commands) {
             .id();
         commands.entity(root).add_child(container);
     }
+
+    let extra = commands.spawn(NodeBundle {
+        style: Style {
+            position_type: PositionType::Absolute,
+            left: Val::Px(100.0),
+            top: Val::Px(300.0),
+            width: Val::Px(500.0),
+            height: Val::Px(200.0),
+            border: UiRect {
+                left: Val::Px(10.0),
+                right: Val::Px(15.0),
+                top: Val::Px(55.0),
+                bottom: Val::Px(15.0),
+            },
+            ..Default::default()
+        },
+        background_color: RED.into(),
+        border_color: BorderColor {
+            top: WHITE.into(),
+            bottom: YELLOW.into(),
+            left: GREEN.into(),
+            right: BLUE.into(),
+        },
+        border_radius: BorderRadius {
+            top_left: Val::Px(20.0),
+            top_right: Val::Px(10.0),
+            bottom_left: Val::Px(100.0),
+            bottom_right: Val::Px(0.0),
+        },
+        ..Default::default()
+    }).id();
+
+    commands.entity(root).add_child(extra);
 }

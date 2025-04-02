@@ -265,7 +265,7 @@ fn add_button_for_value(
                 margin: UiRect::right(Val::Px(12.0)),
                 ..default()
             },
-            border_color: BorderColor(Color::WHITE),
+            border_color: BorderColor::all(Color::WHITE),
             border_radius: BorderRadius::MAX,
             background_color: Color::BLACK.into(),
             ..default()

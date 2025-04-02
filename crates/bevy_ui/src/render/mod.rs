@@ -2,7 +2,7 @@ mod pipeline;
 mod render_pass;
 mod ui_material_pipeline;
 
-use bevy_color::{Alpha, ColorToComponents, LinearRgba};
+use bevy_color::{Alpha, Color, ColorToComponents, LinearRgba};
 use bevy_core_pipeline::core_2d::graph::{Core2d, Node2d};
 use bevy_core_pipeline::core_3d::graph::{Core3d, Node3d};
 use bevy_core_pipeline::{core_2d::Camera2d, core_3d::Camera3d};
@@ -46,7 +46,7 @@ use bevy_sprite::TextureAtlasLayout;
 #[cfg(feature = "bevy_text")]
 use bevy_text::{PositionedGlyph, Text, TextLayoutInfo};
 use bevy_transform::components::GlobalTransform;
-use bevy_utils::HashMap;
+use bevy_utils::{HashMap, HashSet};
 use bytemuck::{Pod, Zeroable};
 use std::ops::Range;
 
@@ -153,7 +153,7 @@ fn get_ui_graph(render_app: &mut SubApp) -> RenderGraph {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum NodeType {
     Rect,
-    Border,
+    Border(u32), // shader_flags
 }
 
 pub struct ExtractedUiNode {
@@ -534,7 +534,7 @@ pub fn extract_uinode_borders(
 
         // Skip invisible borders
         if !view_visibility.get()
-            || border_color.0.is_fully_transparent()
+            || border_color.is_fully_transparent()
             || node.size().x <= 0.
             || node.size().y <= 0.
         {
@@ -582,28 +582,68 @@ pub fn extract_uinode_borders(
         let border_radius = clamp_radius(border_radius, node.size(), border.into());
         let transform = global_transform.compute_matrix();
 
-        extracted_uinodes.uinodes.insert(
-            commands.spawn_empty().id(),
-            ExtractedUiNode {
-                stack_index: node.stack_index,
-                // This translates the uinode's transform to the center of the current border rectangle
-                transform,
-                color: border_color.0.into(),
-                rect: Rect {
-                    max: node.size(),
-                    ..Default::default()
-                },
-                image,
-                atlas_size: None,
-                clip: clip.map(|clip| clip.clip),
-                flip_x: false,
-                flip_y: false,
-                camera_entity,
-                border_radius,
-                border,
-                node_type: NodeType::Border,
-            },
+        // helper to allow for `Eq` color comparisons so we can build a hashset
+        let convert = |c: Color| -> [u8; 16] { bytemuck::cast::<_, [u8; 16]>(c.to_linear()) };
+
+        // gather unique colors
+        let border_colors = HashSet::from_iter(
+            [
+                border_color.left,
+                border_color.top,
+                border_color.right,
+                border_color.bottom,
+            ]
+            .map(convert),
         );
+
+        for &converted_color in border_colors.iter() {
+            let color = bytemuck::cast::<[u8; 16], LinearRgba>(converted_color);
+
+            // skip transparent
+            if color.alpha == 0.0 {
+                continue;
+            }
+
+            // gather flags of borders that match this color
+            let border_flags = [
+                (border_color.left, shader_flags::BORDER_LEFT),
+                (border_color.top, shader_flags::BORDER_TOP),
+                (border_color.right, shader_flags::BORDER_RIGHT),
+                (border_color.bottom, shader_flags::BORDER_BOTTOM),
+            ]
+            .map(|(border_color, flag)| {
+                if convert(border_color) == converted_color {
+                    flag
+                } else {
+                    0
+                }
+            })
+            .into_iter()
+            .sum::<u32>();
+
+            extracted_uinodes.uinodes.insert(
+                commands.spawn_empty().id(),
+                ExtractedUiNode {
+                    stack_index: node.stack_index,
+                    // This translates the uinode's transform to the center of the current border rectangle
+                    transform,
+                    color,
+                    rect: Rect {
+                        max: node.size(),
+                        ..Default::default()
+                    },
+                    image,
+                    atlas_size: None,
+                    clip: clip.map(|clip| clip.clip),
+                    flip_x: false,
+                    flip_y: false,
+                    camera_entity,
+                    border_radius,
+                    border,
+                    node_type: NodeType::Border(border_flags),
+                },
+            );
+        }
     }
 }
 
@@ -941,7 +981,10 @@ pub mod shader_flags {
     pub const TEXTURED: u32 = 1;
     /// Ordering: top left, top right, bottom right, bottom left.
     pub const CORNERS: [u32; 4] = [0, 2, 2 | 4, 4];
-    pub const BORDER: u32 = 8;
+    pub const BORDER_LEFT: u32 = 8;
+    pub const BORDER_TOP: u32 = 16;
+    pub const BORDER_RIGHT: u32 = 32;
+    pub const BORDER_BOTTOM: u32 = 64;
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1208,8 +1251,9 @@ pub fn prepare_uinodes(
                     };
 
                     let color = extracted_uinode.color.to_f32_array();
-                    if extracted_uinode.node_type == NodeType::Border {
-                        flags |= shader_flags::BORDER;
+
+                    if let NodeType::Border(border_flags) = extracted_uinode.node_type {
+                        flags |= border_flags;
                     }
 
                     for i in 0..4 {
