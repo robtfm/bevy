@@ -121,7 +121,8 @@ fn calculate_circle_of_confusion(in_frag_coord: vec4<f32>) -> f32 {
     // Sample the depth.
     let frag_coord = vec2<i32>(floor(in_frag_coord.xy));
     let raw_depth = textureLoad(depth_texture, frag_coord, 0);
-    let depth = min(-depth_ndc_to_view_z(raw_depth), dof_params.max_depth);
+    let depth_raw = min(-depth_ndc_to_view_z(raw_depth), dof_params.max_depth);
+    let depth = max(depth_raw, focus);
 
     // Calculate the circle of confusion.
     //
