@@ -166,7 +166,7 @@ fn gaussian_blur(frag_coord: vec4<f32>, coc: f32, frag_offset: vec2<f32>) -> vec
 
     // Accumulate samples on both sides of the current texel. Go two at a time,
     // taking advantage of bilinear filtering.
-    var sum = textureSampleLevel(color_texture_a, color_texture_sampler, uv, 0.0).rgb;
+    var sum = textureSampleLevel(color_texture_a, color_texture_sampler, uv, 0.0);
     var weight_sum = 1.0;
     for (var i = 1; i <= support; i += 2) {
         // This is a well-known trick to reduce the number of needed texture
@@ -189,13 +189,13 @@ fn gaussian_blur(frag_coord: vec4<f32>, coc: f32, frag_offset: vec2<f32>) -> vec
         let weight = w0 + w1;
 
         sum += (
-            textureSampleLevel(color_texture_a, color_texture_sampler, uv + uv_offset, 0.0).rgb +
-            textureSampleLevel(color_texture_a, color_texture_sampler, uv - uv_offset, 0.0).rgb
+            textureSampleLevel(color_texture_a, color_texture_sampler, uv + uv_offset, 0.0) +
+            textureSampleLevel(color_texture_a, color_texture_sampler, uv - uv_offset, 0.0)
         ) * weight;
         weight_sum += weight * 2.0;
     }
 
-    return vec4(sum / weight_sum, 1.0);
+    return vec4(sum / weight_sum);
 }
 
 // Performs a box blur in a single direction, sampling `color_texture_a`.
