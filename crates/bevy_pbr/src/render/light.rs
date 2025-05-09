@@ -746,6 +746,8 @@ pub fn prepare_lights(
 
     // set up light data for each view
     for (entity, extracted_view, clusters, maybe_layers, maybe_ambient_override) in &views {
+        let view_layers = maybe_layers.unwrap_or_default();
+
         let mut gpu_directional_lights = [GpuDirectionalLight::default(); MAX_DIRECTIONAL_LIGHTS];
         let mut num_directional_cascades_enabled = 0usize;
         for (index, (_light_entity, light)) in directional_lights
@@ -754,6 +756,10 @@ pub fn prepare_lights(
             .take(MAX_DIRECTIONAL_LIGHTS)
         {
             let mut flags = DirectionalLightFlags::NONE;
+
+            if !view_layers.intersects(&light.render_layers) {
+                continue;
+            }
     
             // Lights are sorted, volumetric and shadow enabled lights are first
             if light.volumetric
@@ -996,7 +1002,6 @@ pub fn prepare_lights(
 
         // directional lights
         let mut directional_depth_texture_array_index = 0u32;
-        let view_layers = maybe_layers.unwrap_or_default();
         for (light_index, &(light_entity, light)) in directional_lights
             .iter()
             .enumerate()
