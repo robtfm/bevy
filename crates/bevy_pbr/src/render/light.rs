@@ -794,6 +794,26 @@ pub fn prepare_lights(
 
     // set up light data for each view
     for (entity, extracted_view, clusters, maybe_layers, maybe_ambient_override) in &views {
+        let mut num_directional_cascades_enabled = 0;
+        for (index, (_light_entity, light)) in directional_lights
+            .iter()
+            .enumerate()
+            .take(MAX_DIRECTIONAL_LIGHTS)
+        {
+            if !maybe_layers.unwrap_or_default().intersects(&light.render_layers) {
+                continue;
+            }
+
+            let num_cascades = light
+                .cascade_shadow_config
+                .bounds
+                .len()
+                .min(MAX_CASCADES_PER_LIGHT);
+            if index < directional_shadow_enabled_count {
+                num_directional_cascades_enabled += num_cascades;
+            }
+        }
+
         let point_light_depth_texture = texture_cache.get(
             &render_device,
             TextureDescriptor {
