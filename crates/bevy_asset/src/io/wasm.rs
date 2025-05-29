@@ -84,6 +84,13 @@ impl HttpWasmAssetReader {
             status => Err(AssetReaderError::HttpError(status)),
         }
     }
+
+    /// Returns the root directory where assets are loaded from.
+    ///
+    /// See `get_base_path`.
+    pub fn root_path(&self) -> &PathBuf {
+        &self.root_path
+    }
 }
 
 impl AssetReader for HttpWasmAssetReader {
