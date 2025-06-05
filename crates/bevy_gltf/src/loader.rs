@@ -30,7 +30,7 @@ use bevy_render::{
     prelude::SpatialBundle,
     primitives::Aabb,
     render_asset::RenderAssetUsages,
-    render_resource::{Face, PrimitiveTopology},
+    render_resource::{Face, PrimitiveTopology, TextureFormat},
     texture::{
         CompressedImageFormats, Image, ImageAddressMode, ImageFilterMode, ImageLoaderSettings,
         ImageSampler, ImageSamplerDescriptor, ImageType, TextureError,
@@ -820,7 +820,8 @@ fn load_image<'a, 'b>(
             let start = view.offset();
             let end = view.offset() + view.length();
             let buffer = &buffer_data[view.buffer().index()][start..end];
-            let image = Image::from_buffer(
+            #[allow(unused_mut)]
+            let mut image = Image::from_buffer(
                 #[cfg(all(debug_assertions, feature = "dds"))]
                 name,
                 buffer,
@@ -830,6 +831,24 @@ fn load_image<'a, 'b>(
                 ImageSampler::Descriptor(sampler_descriptor),
                 render_asset_usages,
             )?;
+            #[cfg(target_arch="wasm32")]
+            if image.texture_descriptor.format == TextureFormat::Rgba16Unorm {
+                let data = image
+                    .data
+                    .chunks_exact(2)
+                    .map(|pair| {
+                        (u16::from_le_bytes([pair[0], pair[1]]) as f32 / u16::MAX as f32
+                            * u8::MAX as f32) as u8
+                    })
+                    .collect::<Vec<_>>();
+                image = Image::new(
+                    image.texture_descriptor.size,
+                    image.texture_descriptor.dimension,
+                    data,
+                    TextureFormat::Rgba8Unorm,
+                    image.asset_usage,
+                );
+            }    
             Ok(ImageOrPath::Image {
                 image,
                 label: GltfAssetLabel::Texture(gltf_texture.index()),
@@ -843,17 +862,40 @@ fn load_image<'a, 'b>(
             if let Ok(data_uri) = DataUri::parse(uri) {
                 let bytes = data_uri.decode()?;
                 let image_type = ImageType::MimeType(data_uri.mime_type);
+
+                #[allow(unused_mut)]
+                let mut image = Image::from_buffer(
+                    #[cfg(all(debug_assertions, feature = "dds"))]
+                    name,
+                    &bytes,
+                    mime_type.map(ImageType::MimeType).unwrap_or(image_type),
+                    supported_compressed_formats,
+                    is_srgb,
+                    ImageSampler::Descriptor(sampler_descriptor),
+                    render_asset_usages,
+                )?;
+
+                #[cfg(target_arch="wasm32")]
+                if image.texture_descriptor.format == TextureFormat::Rgba16Unorm {
+                    let data = image
+                        .data
+                        .chunks_exact(2)
+                        .map(|pair| {
+                            (u16::from_le_bytes([pair[0], pair[1]]) as f32 / u16::MAX as f32
+                                * u8::MAX as f32) as u8
+                        })
+                        .collect::<Vec<_>>();
+                    image = Image::new(
+                        image.texture_descriptor.size,
+                        image.texture_descriptor.dimension,
+                        data,
+                        TextureFormat::Rgba8Unorm,
+                        image.asset_usage,
+                    );
+                }
+        
                 Ok(ImageOrPath::Image {
-                    image: Image::from_buffer(
-                        #[cfg(all(debug_assertions, feature = "dds"))]
-                        name,
-                        &bytes,
-                        mime_type.map(ImageType::MimeType).unwrap_or(image_type),
-                        supported_compressed_formats,
-                        is_srgb,
-                        ImageSampler::Descriptor(sampler_descriptor),
-                        render_asset_usages,
-                    )?,
+                    image,
                     label: GltfAssetLabel::Texture(gltf_texture.index()),
                 })
             } else {
