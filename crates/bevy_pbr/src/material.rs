@@ -629,10 +629,10 @@ impl RenderMaterialInstances {
 /// material type, for simplicity.
 pub struct RenderMaterialInstance {
     /// The material asset.
-    pub(crate) asset_id: UntypedAssetId,
+    pub asset_id: UntypedAssetId,
     /// The [`RenderMaterialInstances::current_change_tick`] at which this
     /// material instance was last modified.
-    last_change_tick: Tick,
+    pub last_change_tick: Tick,
 }
 
 /// A [`SystemSet`] that contains all `extract_mesh_materials` systems.
