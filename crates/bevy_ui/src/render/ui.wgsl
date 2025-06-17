@@ -170,7 +170,7 @@ fn draw(in: VertexOutput, texture_color: vec4<f32>) -> vec4<f32> {
     let border_distance = max(external_distance, -internal_distance);
 
     // check if this node should apply color for the nearest border
-    let nearest_border = select(0.0, 1.0, nearest_border_active(point, size, border, flags));
+    let nearest_border = select(0.0, 1.0, nearest_border_active(in.point, in.size, in.border, in.flags));
 
 #ifdef ANTI_ALIAS
     // At external edges with no border, `border_distance` is equal to zero. 
@@ -206,7 +206,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let texture_color = textureSample(sprite_texture, sprite_sampler, in.uv);
 
     if enabled(in.flags, BORDER_ANY) {
-        return draw(in, texture_color, in.flags);
+        return draw(in, texture_color);
     } else {
         return draw_background(in, texture_color);
     }
