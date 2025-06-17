@@ -284,10 +284,7 @@ pub fn ui_focus_system(
                 Some(*entity)
             } else {
                 if let Some(mut interaction) = node.interaction {
-                    if *interaction == Interaction::Hovered || (relative_cursor_position.is_none())
-                    {
-                        interaction.set_if_neq(Interaction::None);
-                    }
+                    interaction.set_if_neq(Interaction::None);
                 }
                 None
             }
