@@ -44,8 +44,8 @@ use bevy_render::{
     view::Visibility,
 };
 use bevy_scene::Scene;
-#[cfg(not(target_arch = "wasm32"))]
-use bevy_tasks::IoTaskPool;
+// #[cfg(not(target_arch = "wasm32"))]
+// use bevy_tasks::IoTaskPool;
 use bevy_transform::components::Transform;
 
 use gltf::{
@@ -513,7 +513,7 @@ async fn load_gltf<'a, 'b, 'c>(
     // later in the loader when looking up handles for materials. However this would mean
     // that the material's load context would no longer track those images as dependencies.
     let mut _texture_handles = Vec::new();
-    if gltf.textures().len() == 1 || cfg!(target_arch = "wasm32") {
+    // if gltf.textures().len() == 1 || cfg!(target_arch = "wasm32") {
         for texture in gltf.textures() {
             let parent_path = load_context.path().parent().unwrap();
             let image = load_image(
@@ -523,41 +523,42 @@ async fn load_gltf<'a, 'b, 'c>(
                 parent_path,
                 loader.supported_compressed_formats,
                 settings.load_materials,
-            )
-            .await?;
+            // )
+            // .await?;
+            )?;
             image.process_loaded_texture(load_context, &mut _texture_handles);
         }
-    } else {
-        #[cfg(not(target_arch = "wasm32"))]
-        IoTaskPool::get()
-            .scope(|scope| {
-                gltf.textures().for_each(|gltf_texture| {
-                    let parent_path = load_context.path().parent().unwrap();
-                    let linear_textures = &linear_textures;
-                    let buffer_data = &buffer_data;
-                    scope.spawn(async move {
-                        load_image(
-                            gltf_texture,
-                            buffer_data,
-                            linear_textures,
-                            parent_path,
-                            loader.supported_compressed_formats,
-                            settings.load_materials,
-                        )
-                        .await
-                    });
-                });
-            })
-            .into_iter()
-            .for_each(|result| match result {
-                Ok(image) => {
-                    image.process_loaded_texture(load_context, &mut _texture_handles);
-                }
-                Err(err) => {
-                    warn!("Error loading glTF texture: {}", err);
-                }
-            });
-    }
+    // } else {
+    //     #[cfg(not(target_arch = "wasm32"))]
+    //     IoTaskPool::get()
+    //         .scope(|scope| {
+    //             gltf.textures().for_each(|gltf_texture| {
+    //                 let parent_path = load_context.path().parent().unwrap();
+    //                 let linear_textures = &linear_textures;
+    //                 let buffer_data = &buffer_data;
+    //                 scope.spawn(async move {
+    //                     load_image(
+    //                         gltf_texture,
+    //                         buffer_data,
+    //                         linear_textures,
+    //                         parent_path,
+    //                         loader.supported_compressed_formats,
+    //                         settings.load_materials,
+    //                     )
+    //                     .await
+    //                 });
+    //             });
+    //         })
+    //         .into_iter()
+    //         .for_each(|result| match result {
+    //             Ok(image) => {
+    //                 image.process_loaded_texture(load_context, &mut _texture_handles);
+    //             }
+    //             Err(err) => {
+    //                 warn!("Error loading glTF texture: {}", err);
+    //             }
+    //         });
+    // }
 
     let mut materials = vec![];
     let mut named_materials = <HashMap<_, _>>::default();
@@ -952,7 +953,7 @@ async fn load_gltf<'a, 'b, 'c>(
 }
 
 /// Loads a glTF texture as a bevy [`Image`] and returns it together with its label.
-async fn load_image<'a, 'b>(
+fn load_image<'a, 'b>(
     gltf_texture: gltf::Texture<'a>,
     buffer_data: &[Vec<u8>],
     linear_textures: &HashSet<usize>,
