@@ -83,9 +83,9 @@ impl ImageLoader {
 
 #[derive(Serialize, Deserialize, Default, Debug, Clone)]
 pub enum ImageFormatSetting {
-    #[default]
     FromExtension,
     Format(ImageFormat),
+    #[default]
     Guess,
 }
 
