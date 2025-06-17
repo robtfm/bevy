@@ -1,4 +1,4 @@
-use bevy_math::{Mat4, Vec3, Vec4};
+use bevy_math::{Mat4, Vec3};
 
 /// A distance calculator for the draw order of [`PhaseItem`](crate::render_phase::PhaseItem)s.
 pub struct ViewRangefinder3d {
@@ -8,8 +8,6 @@ pub struct ViewRangefinder3d {
 impl ViewRangefinder3d {
     /// Creates a 3D rangefinder for a view matrix.
     pub fn from_world_from_view(world_from_view: &Mat4) -> ViewRangefinder3d {
-        let view_from_world = world_from_view.inverse();
-
         ViewRangefinder3d {
             translation: world_from_view.col(3).truncate(),
         }
