@@ -2,10 +2,10 @@
 
 use bevy_ecs::prelude::*;
 use bevy_platform::collections::HashSet;
+use bevy_render::camera::Camera;
 
 use crate::{
-    experimental::{UiChildren, UiRootNodes},
-    ComputedNode, GlobalZIndex, ZIndex,
+    experimental::{UiChildren, UiRootNodes}, ComputedNode, ComputedNodeTarget, DefaultUiCamera, GlobalZIndex, ZIndex
 };
 
 /// The current UI stack, which contains all UI nodes ordered by their depth (back-to-front).
@@ -38,14 +38,25 @@ impl ChildBufferCache {
 /// Create a list of root nodes from parentless entities and entities with a `GlobalZIndex` component.
 /// Then build the `UiStack` from a walk of the existing layout trees starting from each root node,
 /// filtering branches by `Without<GlobalZIndex>`so that we don't revisit nodes.
+#[allow(clippy::too_many_arguments)]
 pub fn ui_stack_system(
     mut cache: Local<ChildBufferCache>,
-    mut root_nodes: Local<Vec<(Entity, (i32, i32))>>,
+    mut root_nodes: Local<Vec<(Entity, (isize, i32, i32))>>,
     mut visited_root_nodes: Local<HashSet<Entity>>,
     mut ui_stack: ResMut<UiStack>,
     ui_root_nodes: UiRootNodes,
-    root_node_query: Query<(Entity, Option<&GlobalZIndex>, Option<&ZIndex>)>,
-    zindex_global_node_query: Query<(Entity, &GlobalZIndex, Option<&ZIndex>), With<ComputedNode>>,
+    root_node_query: Query<(
+        Entity,
+        &ComputedNodeTarget,
+        Option<&GlobalZIndex>,
+        Option<&ZIndex>,
+    )>,
+    cameras: Query<&Camera>,
+    default_ui_camera: DefaultUiCamera,
+    zindex_global_node_query: Query<
+        (Entity, &ComputedNodeTarget, &GlobalZIndex, Option<&ZIndex>),
+        With<ComputedNode>,
+    >,
     ui_children: UiChildren,
     zindex_query: Query<Option<&ZIndex>, (With<ComputedNode>, Without<GlobalZIndex>)>,
     mut update_query: Query<&mut ComputedNode>,
@@ -53,10 +64,23 @@ pub fn ui_stack_system(
     ui_stack.uinodes.clear();
     visited_root_nodes.clear();
 
-    for (id, maybe_global_zindex, maybe_zindex) in root_node_query.iter_many(ui_root_nodes.iter()) {
+    let default_camera_order = default_ui_camera
+        .get()
+        .and_then(|cam_entity| cameras.get(cam_entity).ok())
+        .map(|cam| cam.order)
+        .unwrap_or(isize::MAX);
+
+    for (id, target, maybe_global_zindex, maybe_zindex) in
+        root_node_query.iter_many(ui_root_nodes.iter())
+    {
         root_nodes.push((
             id,
             (
+                target
+                    .camera()
+                    .and_then(|cam_entity| cameras.get(cam_entity).ok())
+                    .map(|cam| cam.order)
+                    .unwrap_or(default_camera_order),
                 maybe_global_zindex.map(|zindex| zindex.0).unwrap_or(0),
                 maybe_zindex.map(|zindex| zindex.0).unwrap_or(0),
             ),
@@ -64,7 +88,7 @@ pub fn ui_stack_system(
         visited_root_nodes.insert(id);
     }
 
-    for (id, global_zindex, maybe_zindex) in zindex_global_node_query.iter() {
+    for (id, target, global_zindex, maybe_zindex) in zindex_global_node_query.iter() {
         if visited_root_nodes.contains(&id) {
             continue;
         }
@@ -72,6 +96,11 @@ pub fn ui_stack_system(
         root_nodes.push((
             id,
             (
+                target
+                    .camera()
+                    .and_then(|cam_entity| cameras.get(cam_entity).ok())
+                    .map(|cam| cam.order)
+                    .unwrap_or(default_camera_order),
                 global_zindex.0,
                 maybe_zindex.map(|zindex| zindex.0).unwrap_or(0),
             ),
