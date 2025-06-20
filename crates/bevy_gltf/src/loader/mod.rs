@@ -514,20 +514,20 @@ async fn load_gltf<'a, 'b, 'c>(
     // that the material's load context would no longer track those images as dependencies.
     let mut _texture_handles = Vec::new();
     // if gltf.textures().len() == 1 || cfg!(target_arch = "wasm32") {
-        for texture in gltf.textures() {
-            let parent_path = load_context.path().parent().unwrap();
-            let image = load_image(
-                texture,
-                &buffer_data,
-                &linear_textures,
-                parent_path,
-                loader.supported_compressed_formats,
-                settings.load_materials,
+    for texture in gltf.textures() {
+        let parent_path = load_context.path().parent().unwrap();
+        let image = load_image(
+            texture,
+            &buffer_data,
+            &linear_textures,
+            parent_path,
+            loader.supported_compressed_formats,
+            settings.load_materials,
             // )
             // .await?;
-            )?;
-            image.process_loaded_texture(load_context, &mut _texture_handles);
-        }
+        )?;
+        image.process_loaded_texture(load_context, &mut _texture_handles);
+    }
     // } else {
     //     #[cfg(not(target_arch = "wasm32"))]
     //     IoTaskPool::get()
@@ -982,6 +982,31 @@ fn load_image<'a, 'b>(
                 ImageSampler::Descriptor(sampler_descriptor),
                 render_asset_usages,
             )?;
+
+            #[cfg(target_arch = "wasm32")]
+            let image = if image.texture_descriptor.format
+                == bevy_render::render_resource::TextureFormat::Rgba16Unorm
+            {
+                let data = image
+                    .data
+                    .unwrap()
+                    .chunks_exact(2)
+                    .map(|pair| {
+                        (u16::from_le_bytes([pair[0], pair[1]]) as f32 / u16::MAX as f32
+                            * u8::MAX as f32) as u8
+                    })
+                    .collect::<Vec<_>>();
+                Image::new(
+                    image.texture_descriptor.size,
+                    image.texture_descriptor.dimension,
+                    data,
+                    bevy_render::render_resource::TextureFormat::Rgba8Unorm,
+                    image.asset_usage,
+                )
+            } else {
+                image
+            };
+
             Ok(ImageOrPath::Image {
                 image,
                 label: GltfAssetLabel::Texture(gltf_texture.index()),
@@ -995,17 +1020,44 @@ fn load_image<'a, 'b>(
             if let Ok(data_uri) = DataUri::parse(uri) {
                 let bytes = data_uri.decode()?;
                 let image_type = ImageType::MimeType(data_uri.mime_type);
+
+                let image = Image::from_buffer(
+                    #[cfg(all(debug_assertions, feature = "dds"))]
+                    name,
+                    &bytes,
+                    mime_type.map(ImageType::MimeType).unwrap_or(image_type),
+                    supported_compressed_formats,
+                    is_srgb,
+                    ImageSampler::Descriptor(sampler_descriptor),
+                    render_asset_usages,
+                )?;
+
+                #[cfg(target_arch = "wasm32")]
+                let image = if image.texture_descriptor.format
+                    == bevy_render::render_resource::TextureFormat::Rgba16Unorm
+                {
+                    let data = image
+                        .data
+                        .unwrap()
+                        .chunks_exact(2)
+                        .map(|pair| {
+                            (u16::from_le_bytes([pair[0], pair[1]]) as f32 / u16::MAX as f32
+                                * u8::MAX as f32) as u8
+                        })
+                        .collect::<Vec<_>>();
+                    Image::new(
+                        image.texture_descriptor.size,
+                        image.texture_descriptor.dimension,
+                        data,
+                        bevy_render::render_resource::TextureFormat::Rgba8Unorm,
+                        image.asset_usage,
+                    )
+                } else {
+                    image
+                };
+
                 Ok(ImageOrPath::Image {
-                    image: Image::from_buffer(
-                        #[cfg(all(debug_assertions, feature = "dds"))]
-                        name,
-                        &bytes,
-                        mime_type.map(ImageType::MimeType).unwrap_or(image_type),
-                        supported_compressed_formats,
-                        is_srgb,
-                        ImageSampler::Descriptor(sampler_descriptor),
-                        render_asset_usages,
-                    )?,
+                    image,
                     label: GltfAssetLabel::Texture(gltf_texture.index()),
                 })
             } else {

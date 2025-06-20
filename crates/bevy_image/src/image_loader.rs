@@ -149,7 +149,8 @@ impl AssetLoader for ImageLoader {
                 )?)
             }
         };
-        Ok(Image::from_buffer(
+
+        let image = Image::from_buffer(
             #[cfg(all(debug_assertions, feature = "dds"))]
             load_context.path().display().to_string(),
             &bytes,
@@ -162,7 +163,35 @@ impl AssetLoader for ImageLoader {
         .map_err(|err| FileTextureError {
             error: err,
             path: format!("{}", load_context.path().display()),
-        })?)
+        })?;
+
+        
+
+        #[cfg(target_arch = "wasm32")]
+        let image = if image.texture_descriptor.format
+            == wgpu_types::TextureFormat::Rgba16Unorm
+        {
+            let data = image
+                .data
+                .unwrap()
+                .chunks_exact(2)
+                .map(|pair| {
+                    (u16::from_le_bytes([pair[0], pair[1]]) as f32 / u16::MAX as f32
+                        * u8::MAX as f32) as u8
+                })
+                .collect::<Vec<_>>();
+            Image::new(
+                image.texture_descriptor.size,
+                image.texture_descriptor.dimension,
+                data,
+                wgpu_types::TextureFormat::Rgba8Unorm,
+                image.asset_usage,
+            )
+        } else {
+            image
+        };
+
+        Ok(image)
     }
 
     fn extensions(&self) -> &[&str] {
