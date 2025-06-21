@@ -2191,7 +2191,7 @@ pub struct ZIndex(pub i32);
 /// If two Nodes have the same `GlobalZIndex`, the node with the greater [`ZIndex`] will be drawn on top.
 #[derive(Component, Copy, Clone, Debug, Default, PartialEq, Eq, Reflect)]
 #[reflect(Component, Default, Debug, PartialEq, Clone)]
-pub struct GlobalZIndex(pub i32);
+pub struct GlobalZIndex(pub (i32, i32));
 
 /// Used to add rounded corners to a UI node. You can set a UI node to have uniformly
 /// rounded corners or specify different radii for each corner. If a given radius exceeds half

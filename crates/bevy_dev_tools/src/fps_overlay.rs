@@ -101,7 +101,7 @@ fn setup(mut commands: Commands, overlay_config: Res<FpsOverlayConfig>) {
                 ..Default::default()
             },
             // Render overlay on top of everything
-            GlobalZIndex(FPS_OVERLAY_ZINDEX),
+            GlobalZIndex((0, FPS_OVERLAY_ZINDEX)),
         ))
         .with_children(|p| {
             p.spawn((
