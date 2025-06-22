@@ -97,7 +97,7 @@ fn setup(mut commands: Commands) {
                             ..default()
                         },
                         BackgroundColor(PURPLE.into()),
-                        GlobalZIndex((0, 1)),
+                        GlobalZIndex(1),
                     ));
 
                     // spawn a node with a negative global z-index of -1.
@@ -113,7 +113,7 @@ fn setup(mut commands: Commands) {
                             ..default()
                         },
                         BackgroundColor(YELLOW.into()),
-                        GlobalZIndex((0, -1)),
+                        GlobalZIndex(-1),
                     ));
                 });
         });

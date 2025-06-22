@@ -41,7 +41,7 @@ impl ChildBufferCache {
 #[allow(clippy::too_many_arguments)]
 pub fn ui_stack_system(
     mut cache: Local<ChildBufferCache>,
-    mut root_nodes: Local<Vec<(Entity, (isize, (i32, i32), i32))>>,
+    mut root_nodes: Local<Vec<(Entity, (isize, i32, i32))>>,
     mut visited_root_nodes: Local<HashSet<Entity>>,
     mut ui_stack: ResMut<UiStack>,
     ui_root_nodes: UiRootNodes,
@@ -81,7 +81,7 @@ pub fn ui_stack_system(
                     .and_then(|cam_entity| cameras.get(cam_entity).ok())
                     .map(|cam| cam.order)
                     .unwrap_or(default_camera_order),
-                maybe_global_zindex.map(|zindex| zindex.0).unwrap_or((0,0)),
+                maybe_global_zindex.map(|zindex| zindex.0).unwrap_or(0),
                 maybe_zindex.map(|zindex| zindex.0).unwrap_or(0),
             ),
         ));
@@ -171,7 +171,7 @@ mod tests {
 
     fn node_with_global_and_local_zindex(
         name: &'static str,
-        global_zindex: (i32, i32),
+        global_zindex: i32,
         local_zindex: i32,
     ) -> (Label, Node, GlobalZIndex, ZIndex) {
         (
@@ -184,7 +184,7 @@ mod tests {
 
     fn node_with_global_zindex(
         name: &'static str,
-        global_zindex: (i32, i32),
+        global_zindex: i32,
     ) -> (Label, Node, GlobalZIndex) {
         (Label(name), Node::default(), GlobalZIndex(global_zindex))
     }
@@ -224,10 +224,10 @@ mod tests {
                     });
                 parent.spawn(node_without_zindex("1-1"));
                 parent
-                    .spawn(node_with_global_zindex("1-2", (0, -1)))
+                    .spawn(node_with_global_zindex("1-2", -1))
                     .with_children(|parent| {
                         parent.spawn(node_without_zindex("1-2-0"));
-                        parent.spawn(node_with_global_zindex("1-2-1", (0, -3)));
+                        parent.spawn(node_with_global_zindex("1-2-1", -3));
                         parent
                             .spawn(node_without_zindex("1-2-2"))
                             .with_children(|_| ());
@@ -249,7 +249,7 @@ mod tests {
                     });
             });
 
-        commands.spawn(node_with_global_zindex("3", (0, -2)));
+        commands.spawn(node_with_global_zindex("3", -2));
 
         queue.apply(&mut world);
 
@@ -265,9 +265,9 @@ mod tests {
             .map(|entity| query.get(&world, *entity).unwrap().clone())
             .collect::<Vec<_>>();
         let expected_result = vec![
-            (Label("1-2-1")), // GlobalZIndex(0, -3)
-            (Label("3")),     // GlobalZIndex(0, -2)
-            (Label("1-2")),   // GlobalZIndex(0, -1)
+            (Label("1-2-1")), // GlobalZIndex(-3)
+            (Label("3")),     // GlobalZIndex(-2)
+            (Label("1-2")),   // GlobalZIndex(-1)
             (Label("1-2-0")),
             (Label("1-2-2")),
             (Label("1-2-3")),
@@ -282,7 +282,7 @@ mod tests {
             (Label("1-0-1")),
             (Label("1-1")),
             (Label("1-3")),
-            (Label("0")), // GlobalZIndex(0, 2)
+            (Label("0")), // GlobalZIndex(2)
         ];
         assert_eq!(actual_result, expected_result);
     }
@@ -294,16 +294,16 @@ mod tests {
 
         let mut queue = CommandQueue::default();
         let mut commands = Commands::new(&mut queue, &world);
-        commands.spawn(node_with_global_and_local_zindex("0", (0, -1), 1));
-        commands.spawn(node_with_global_and_local_zindex("1", (0, -1), 2));
-        commands.spawn(node_with_global_and_local_zindex("2", (0, 1), 3));
-        commands.spawn(node_with_global_and_local_zindex("3", (0, 1), -3));
+        commands.spawn(node_with_global_and_local_zindex("0", -1, 1));
+        commands.spawn(node_with_global_and_local_zindex("1", -1, 2));
+        commands.spawn(node_with_global_and_local_zindex("2", 1, 3));
+        commands.spawn(node_with_global_and_local_zindex("3", 1, -3));
         commands
             .spawn(node_without_zindex("4"))
             .with_children(|builder| {
-                builder.spawn(node_with_global_and_local_zindex("5", (0, 0), -1));
-                builder.spawn(node_with_global_and_local_zindex("6", (0, 0), 1));
-                builder.spawn(node_with_global_and_local_zindex("7", (0, -1), -1));
+                builder.spawn(node_with_global_and_local_zindex("5", 0, -1));
+                builder.spawn(node_with_global_and_local_zindex("6", 0, 1));
+                builder.spawn(node_with_global_and_local_zindex("7", -1, -1));
                 builder.spawn(node_with_global_zindex("8", 1));
             });
 

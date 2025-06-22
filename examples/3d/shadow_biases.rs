@@ -100,7 +100,7 @@ fn setup(
                 ..default()
             },
             BackgroundColor(Color::BLACK.with_alpha(0.75)),
-            GlobalZIndex((0, i32::MAX)),
+            GlobalZIndex(i32::MAX),
         ))
         .with_children(|p| {
             p.spawn(Text::default()).with_children(|p| {
