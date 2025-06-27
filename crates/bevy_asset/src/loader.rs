@@ -532,7 +532,7 @@ impl<'a> LoadContext<'a> {
     ) -> Result<ErasedLoadedAsset, LoadDirectError> {
         let loaded_asset = self
             .asset_server
-            .load_with_meta_loader_and_reader(
+            .load_with_meta_loader_and_reader_internal(
                 &path,
                 meta,
                 loader,
@@ -549,6 +549,33 @@ impl<'a> LoadContext<'a> {
         let hash = info.map(|i| i.full_hash).unwrap_or_default();
         self.loader_dependencies.insert(path, hash);
         Ok(loaded_asset)
+    }
+
+    
+    pub(crate) async fn load_indirect_internal(
+        &mut self,
+        path: AssetPath<'static>,
+        meta: Box<dyn AssetMetaDyn>,
+        loader: alloc::sync::Arc<dyn ErasedAssetLoader>,
+    ) -> Result<(ErasedLoadedAsset, alloc::sync::Arc<dyn ErasedAssetLoader>), LoadDirectError> {
+        let (loaded_asset, meta, loader) = self
+            .asset_server
+            .load_with_meta_and_loader(
+                &path,
+                meta,
+                loader,
+                false,
+                self.populate_hashes,
+            )
+            .await
+            .map_err(|error| LoadDirectError::LoadError {
+                dependency: path.clone(),
+                error,
+            })?;
+        let info = meta.processed_info().as_ref();
+        let hash = info.map(|i| i.full_hash).unwrap_or_default();
+        self.loader_dependencies.insert(path, hash);
+        Ok((loaded_asset, loader))
     }
 
     /// Create a builder for loading nested assets in this context.

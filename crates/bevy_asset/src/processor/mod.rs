@@ -123,6 +123,8 @@ impl AssetProcessor {
             AssetMetaCheck::Always,
             false,
             UnapprovedPathMode::default(),
+            #[cfg(all(target_arch="wasm32", feature="wasm_threaded_loader"))]
+            None,
         );
         Self { server, data }
     }

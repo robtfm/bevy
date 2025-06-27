@@ -235,6 +235,15 @@ compile_error!(
     Consider either disabling the \"file_watcher\" feature or enabling \"multi_threaded\""
 );
 
+#[cfg(all(feature = "wasm_threaded_loader", target_arch = "wasm32", not(target_feature = "atomics")))]
+compile_error!("wasm_threaded_loader feature requires target-feature=\"atomics\"");
+
+#[cfg(all(feature = "wasm_threaded_loader", target_arch = "wasm32"))]
+#[derive(Clone)]
+pub struct WasmLoaderHandle {
+    load_request_sender: async_channel::Sender<WasmThreadLoadAssetRequest>,
+}
+
 /// Provides "asset" loading and processing functionality. An [`Asset`] is a "runtime value" that is loaded from an [`AssetSource`],
 /// which can be something like a filesystem, a network, etc.
 ///
@@ -263,6 +272,8 @@ pub struct AssetPlugin {
     /// Approved folders are [`AssetPlugin::file_path`] and the folder of each
     /// [`AssetSource`](io::AssetSource). Subfolders within these folders are also valid.
     pub unapproved_path_mode: UnapprovedPathMode,
+    #[cfg(all(feature = "wasm_threaded_loader", target_arch = "wasm32"))]
+    pub wasm_loader_handle: Option<WasmLoaderHandle>,
 }
 
 /// Determines how to react to attempts to load assets not inside the approved folders.
@@ -339,6 +350,8 @@ impl Default for AssetPlugin {
             watch_for_changes_override: None,
             meta_check: AssetMetaCheck::default(),
             unapproved_path_mode: UnapprovedPathMode::default(),
+            #[cfg(all(feature = "wasm_threaded_loader", target_arch = "wasm32"))]
+            wasm_loader_handle: None,
         }
     }
 }
@@ -380,6 +393,8 @@ impl Plugin for AssetPlugin {
                         self.meta_check.clone(),
                         watch,
                         self.unapproved_path_mode.clone(),
+                        #[cfg(all(feature = "wasm_threaded_loader", target_arch = "wasm32"))]
+                        self.wasm_loader_handle.clone(),
                     ));
                 }
                 AssetMode::Processed => {
@@ -411,6 +426,8 @@ impl Plugin for AssetPlugin {
                             AssetMetaCheck::Always,
                             watch,
                             self.unapproved_path_mode.clone(),
+                            #[cfg(all(feature = "wasm_threaded_loader", target_arch = "wasm32"))]
+                            self.wasm_loader_handle.clone(),
                         ));
                     }
                 }

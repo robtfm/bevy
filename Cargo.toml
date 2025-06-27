@@ -514,6 +514,9 @@ ghost_nodes = ["bevy_internal/ghost_nodes"]
 # Uses `async-executor` as a task execution backend.
 async_executor = ["std", "bevy_internal/async_executor"]
 
+# Allows passing in a thread for asset load processing
+wasm_threaded_asset_loader = ["bevy_internal/wasm_threaded_asset_loader"]
+
 # Allows access to the `std` crate.
 std = ["bevy_internal/std"]
 

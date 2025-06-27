@@ -254,6 +254,14 @@ pub trait AssetReader: Send + Sync + 'static {
             Ok(meta_bytes)
         }
     }
+
+    fn block_until_ready<'a>(
+        &'a self,
+        _path: &'a Path,
+    ) -> impl ConditionalSendFuture<Output = Result<(), AssetReaderError>> {
+        // default impl does nothing;
+        async { Ok(()) }
+    }
 }
 
 /// Equivalent to an [`AssetReader`] but using boxed futures, necessary eg. when using a `dyn AssetReader`,
@@ -285,6 +293,11 @@ pub trait ErasedAssetReader: Send + Sync + 'static {
         &'a self,
         path: &'a Path,
     ) -> BoxedFuture<'a, Result<Vec<u8>, AssetReaderError>>;
+
+    fn block_until_ready<'a>(
+        &'a self,
+        path: &'a Path,
+    ) -> BoxedFuture<'a, Result<(), AssetReaderError>>;
 }
 
 impl<T: AssetReader> ErasedAssetReader for T {
@@ -323,6 +336,13 @@ impl<T: AssetReader> ErasedAssetReader for T {
         path: &'a Path,
     ) -> BoxedFuture<'a, Result<Vec<u8>, AssetReaderError>> {
         Box::pin(Self::read_meta_bytes(self, path))
+    }
+
+    fn block_until_ready<'a>(
+        &'a self,
+        path: &'a Path,
+    ) -> BoxedFuture<'a, Result<(), AssetReaderError>> {
+        Box::pin(Self::block_until_ready(self, path))
     }
 }
 

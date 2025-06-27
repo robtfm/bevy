@@ -17,6 +17,7 @@ multi_threaded = ["bevy_tasks/multi_threaded"]
 asset_processor = []
 watch = []
 trace = []
+wasm_threaded_loader = ["async-channel", "spin"]
 
 [dependencies]
 bevy_app = { path = "../bevy_app", version = "0.16.1" }
@@ -51,6 +52,8 @@ thiserror = { version = "2", default-features = false }
 derive_more = { version = "1", default-features = false, features = ["from"] }
 uuid = { version = "1.13.1", features = ["v4"] }
 tracing = { version = "0.1", default-features = false, features = ["std"] }
+async-channel = { version = "2", optional = true }
+spin = { version = "0.9.8", default-features = false, features = ["rwlock"], optional = true }
 
 [target.'cfg(target_os = "android")'.dependencies]
 bevy_window = { path = "../bevy_window", version = "0.16.1" }

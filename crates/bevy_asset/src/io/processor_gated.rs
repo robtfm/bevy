@@ -115,6 +115,20 @@ impl AssetReader for ProcessorGatedReader {
         let result = self.reader.is_directory(path).await?;
         Ok(result)
     }
+
+    async fn block_until_ready<'a>(&'a self, path: &'a Path) -> Result<(), AssetReaderError> {
+        let asset_path = AssetPath::from(path.to_path_buf()).with_source(self.source.clone());
+        match self
+            .processor_data
+            .wait_until_processed(asset_path.clone())
+            .await
+        {
+            ProcessStatus::Processed => Ok(()),
+            ProcessStatus::Failed | ProcessStatus::NonExistent => {
+                Err(AssetReaderError::NotFound(path.to_owned()))
+            }
+        }
+    }
 }
 
 /// An [`AsyncRead`] impl that will hold its asset's transaction lock until [`TransactionLockedReader`] is dropped.
