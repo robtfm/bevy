@@ -165,12 +165,8 @@ impl AssetLoader for ImageLoader {
             path: format!("{}", load_context.path().display()),
         })?;
 
-        
-
         #[cfg(target_arch = "wasm32")]
-        let image = if image.texture_descriptor.format
-            == wgpu_types::TextureFormat::Rgba16Unorm
-        {
+        let image = if image.texture_descriptor.format == wgpu_types::TextureFormat::Rgba16Unorm {
             let data = image
                 .data
                 .unwrap()
@@ -187,6 +183,33 @@ impl AssetLoader for ImageLoader {
                 wgpu_types::TextureFormat::Rgba8Unorm,
                 image.asset_usage,
             )
+        } else {
+            image
+        };
+
+        #[cfg(feature = "reduce_image_sizes")]
+        let image = if image.data.as_ref().unwrap().len() > 1024 * 1024 * 4 {
+            use crate::image::TextureFormatPixelInfo;
+
+            let is_srgb = image.texture_descriptor.format.is_srgb();
+            let asset_usage = image.asset_usage;
+            let pixel_size = image.texture_descriptor.format.pixel_size() as u32;
+
+            match image.try_into_dynamic() {
+                Ok(dyn_image) => {
+                    let dyn_image = dyn_image.resize(
+                        1024 * 4 / pixel_size,
+                        1024 * 4 / pixel_size,
+                        image::imageops::FilterType::CatmullRom,
+                    );
+                    Image::from_dynamic(dyn_image, is_srgb, asset_usage)
+                }
+                Err(e) => {
+                    let image = e.image();
+                    tracing::warn!("failed to resize {:?}", image.texture_descriptor.format);
+                    image
+                }
+            }
         } else {
             image
         };

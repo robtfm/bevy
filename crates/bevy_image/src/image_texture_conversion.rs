@@ -173,21 +173,21 @@ impl Image {
         let width = self.width();
         let height = self.height();
         let Some(data) = self.data else {
-            return Err(IntoDynamicImageError::UninitializedImage);
+            return Err(IntoDynamicImageError::UninitializedImage(self));
         };
-        match self.texture_descriptor.format {
+        Ok(match self.texture_descriptor.format {
             TextureFormat::R8Unorm => {
-                ImageBuffer::from_raw(width, height, data).map(DynamicImage::ImageLuma8)
+                DynamicImage::ImageLuma8(ImageBuffer::from_raw(width, height, data).unwrap())
             }
             TextureFormat::Rg8Unorm => {
-                ImageBuffer::from_raw(width, height, data).map(DynamicImage::ImageLumaA8)
+                DynamicImage::ImageLumaA8(ImageBuffer::from_raw(width, height, data).unwrap())
             }
             TextureFormat::Rgba8UnormSrgb => {
-                ImageBuffer::from_raw(width, height, data).map(DynamicImage::ImageRgba8)
+                DynamicImage::ImageRgba8(ImageBuffer::from_raw(width, height, data).unwrap())
             }
             // This format is commonly used as the format for the swapchain texture
             // This conversion is added here to support screenshots
-            TextureFormat::Bgra8UnormSrgb | TextureFormat::Bgra8Unorm => {
+            TextureFormat::Bgra8UnormSrgb | TextureFormat::Bgra8Unorm => DynamicImage::ImageRgba8(
                 ImageBuffer::from_raw(width, height, {
                     let mut data = data;
                     for bgra in data.chunks_exact_mut(4) {
@@ -195,14 +195,19 @@ impl Image {
                     }
                     data
                 })
-                .map(DynamicImage::ImageRgba8)
-            }
+                .unwrap(),
+            ),
             // Throw and error if conversion isn't supported
-            texture_format => return Err(IntoDynamicImageError::UnsupportedFormat(texture_format)),
-        }
-        .ok_or(IntoDynamicImageError::UnknownConversionError(
-            self.texture_descriptor.format,
-        ))
+            texture_format => {
+                return Err(IntoDynamicImageError::UnsupportedFormat(
+                    texture_format,
+                    Self {
+                        data: Some(data),
+                        ..self
+                    },
+                ))
+            }
+        })
     }
 }
 
@@ -212,15 +217,25 @@ impl Image {
 pub enum IntoDynamicImageError {
     /// Conversion into dynamic image not supported for source format.
     #[error("Conversion into dynamic image not supported for {0:?}.")]
-    UnsupportedFormat(TextureFormat),
+    UnsupportedFormat(TextureFormat, Image),
 
     /// Encountered an unknown error during conversion.
     #[error("Failed to convert into {0:?}.")]
-    UnknownConversionError(TextureFormat),
+    UnknownConversionError(TextureFormat, Image),
 
     /// Tried to convert an image that has no texture data
     #[error("Image has no texture data")]
-    UninitializedImage,
+    UninitializedImage(Image),
+}
+
+impl IntoDynamicImageError {
+    pub fn image(self) -> Image {
+        match self {
+            IntoDynamicImageError::UnsupportedFormat(_, image)
+            | IntoDynamicImageError::UnknownConversionError(_, image)
+            | IntoDynamicImageError::UninitializedImage(image) => image,
+        }
+    }
 }
 
 #[cfg(test)]

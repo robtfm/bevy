@@ -343,6 +343,8 @@ async_executor = [
 
 wasm_threaded_asset_loader = ["bevy_asset?/wasm_threaded_loader"]
 
+reduce_image_sizes = ["bevy_image?/reduce_image_sizes", "bevy_gltf?/reduce_image_sizes"]
+
 # Enables use of browser APIs.
 # Note this is currently only applicable on `wasm32` architectures.
 web = [

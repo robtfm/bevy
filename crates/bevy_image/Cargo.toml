@@ -38,6 +38,8 @@ serialize = ["bevy_reflect", "bevy_platform/serialize", "bevy_utils/serde"]
 zlib = ["flate2"]
 zstd = ["ruzstd"]
 
+reduce_image_sizes = []
+
 [dependencies]
 # bevy
 bevy_app = { path = "../bevy_app", version = "0.16.1" }

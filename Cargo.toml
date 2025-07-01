@@ -517,6 +517,9 @@ async_executor = ["std", "bevy_internal/async_executor"]
 # Allows passing in a thread for asset load processing
 wasm_threaded_asset_loader = ["bevy_internal/wasm_threaded_asset_loader"]
 
+# reduce image sizes to max 1024x1024x4
+reduce_image_sizes = ["bevy_internal/reduce_image_sizes"]
+
 # Allows access to the `std` crate.
 std = ["bevy_internal/std"]
 
