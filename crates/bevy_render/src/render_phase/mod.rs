@@ -1330,10 +1330,10 @@ impl UnbatchableBinnedEntityIndexSet {
                 // but let's go ahead and do the sensible thing anyhow: demote
                 // the compressed `NoDynamicOffsets` field to the full
                 // `DynamicOffsets` array.
-                warn!(
-                    "Unbatchable binned entity index set was demoted from sparse to dense. \
-                    This is a bug in the renderer. Please report it.",
-                );
+                // warn!(
+                //     "Unbatchable binned entity index set was demoted from sparse to dense. \
+                //     This is a bug in the renderer. Please report it.",
+                // );
                 let new_dynamic_offsets = (0..instance_range.len() as u32)
                     .flat_map(|entity_index| self.indices_for_entity_index(entity_index))
                     .chain(iter::once(indices))
