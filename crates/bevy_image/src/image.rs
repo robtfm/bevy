@@ -353,6 +353,7 @@ pub struct Image {
     pub sampler: ImageSampler,
     pub texture_view_descriptor: Option<TextureViewDescriptor<Option<&'static str>>>,
     pub asset_usage: RenderAssetUsages,
+    pub immediate_upload: bool,
 }
 
 /// Used in [`Image`], this determines what image sampler to use when rendering. The default setting,
@@ -750,6 +751,7 @@ impl Image {
             sampler: ImageSampler::Default,
             texture_view_descriptor: None,
             asset_usage,
+            immediate_upload: false,
         }
     }
 

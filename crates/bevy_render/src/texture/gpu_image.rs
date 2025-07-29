@@ -36,7 +36,11 @@ impl RenderAsset for GpuImage {
 
     #[inline]
     fn byte_len(image: &Self::SourceAsset) -> Option<usize> {
-        image.data.as_ref().map(Vec::len)
+        if image.immediate_upload {
+            None
+        } else {
+            image.data.as_ref().map(Vec::len)
+        }
     }
 
     /// Converts the extracted image into a [`GpuImage`].

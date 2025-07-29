@@ -52,6 +52,7 @@ impl FontAtlas {
             // Need to keep this image CPU persistent in order to add additional glyphs later on
             RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
         );
+        image.immediate_upload = true;
         if font_smoothing == FontSmoothing::None {
             image.sampler = ImageSampler::nearest();
         }
