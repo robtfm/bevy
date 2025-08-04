@@ -622,7 +622,7 @@ fn point_light(
     color = diffuse + specular_light;
 #endif  // STANDARD_MATERIAL_CLEARCOAT
 
-    var texture_sample = 1f;
+    var texture_sample = vec3<f32>(1f);
 
 #ifdef LIGHT_TEXTURES
     if enable_texture && (*light).decal_index != 0xFFFFFFFFu {
@@ -636,7 +636,7 @@ fn point_light(
             view_bindings::clustered_decal_sampler,
             decal_uv,
             0.0
-        ).r;
+        ).rgb;
     }
 #endif
 
@@ -669,7 +669,7 @@ fn spot_light(
     let attenuation = saturate(cd * (*light).light_custom_data.z + (*light).light_custom_data.w);
     let spot_attenuation = attenuation * attenuation;
 
-    var texture_sample = 1f;
+    var texture_sample = vec3<f32>(1.0);
 
 #ifdef LIGHT_TEXTURES
     if (*light).decal_index != 0xFFFFFFFFu {
@@ -684,7 +684,7 @@ fn spot_light(
                 view_bindings::clustered_decal_sampler,
                 decal_uv,
                 0.0
-            ).r;
+            ).rgb;
         }
     }
 #endif
