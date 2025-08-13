@@ -1,4 +1,6 @@
-use crate::{CalculatedClip, ComputedNode, ComputedNodeTarget, ResolvedBorderRadius, UiScale, UiStack};
+use crate::{
+    CalculatedClip, ComputedNode, ComputedNodeTarget, ResolvedBorderRadius, UiScale, UiStack,
+};
 use bevy_ecs::{
     change_detection::DetectChangesMut,
     entity::{ContainsEntity, Entity},
@@ -167,17 +169,19 @@ pub fn set_camera_window_cursor_position(
 
         let cursor_position = maybe_window_ref
             .and_then(|w| windows.get(w.entity()).ok())
-            .and_then(Window::cursor_position)
-            .or_else(|| touches_input.first_pressed_position())
+            .and_then(Window::physical_cursor_position)
+            .or_else(|| {
+                touches_input
+                    .first_pressed_position()
+                    .map(|pos| pos * primary_window.map(|pw| pw.scale_factor()).unwrap_or(1.0))
+            })
             .map(|raw_cursor_position| {
                 let viewport_position = camera
-                    .logical_viewport_rect()
+                    .physical_viewport_rect()
                     .map(|rect| rect.min)
                     .unwrap_or_default();
 
-                // The cursor position returned by `Window` only takes into account the window scale factor and not `UiScale`.
-                // To convert the cursor position to logical UI viewport coordinates we have to divide it by `UiScale`.
-                (raw_cursor_position - viewport_position) / ui_scale.0
+                raw_cursor_position - viewport_position
             });
 
         // update or insert
