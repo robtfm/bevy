@@ -161,6 +161,10 @@ pub fn set_camera_window_cursor_position(
     ui_scale: Res<UiScale>,
 ) {
     let primary_window = primary_window.iter().next();
+    let primary_scale_factor = primary_window
+        .and_then(|pw| windows.get(pw).ok())
+        .and_then(|pw| pw.scale_factor())
+        .unwrap_or(1.0);
     for (camera_entity, camera, maybe_cursor) in &mut camera_query {
         let maybe_window_ref = match camera.target.normalize(primary_window) {
             Some(NormalizedRenderTarget::Window(w)) => Some(w),
@@ -173,7 +177,7 @@ pub fn set_camera_window_cursor_position(
             .or_else(|| {
                 touches_input
                     .first_pressed_position()
-                    .map(|pos| pos * primary_window.map(|pw| pw.scale_factor()).unwrap_or(1.0))
+                    .map(|pos| pos * primary_scale_factor)
             })
             .map(|raw_cursor_position| {
                 let viewport_position = camera
