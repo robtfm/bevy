@@ -163,7 +163,7 @@ pub fn set_camera_window_cursor_position(
     let primary_window = primary_window.iter().next();
     let primary_scale_factor = primary_window
         .and_then(|pw| windows.get(pw).ok())
-        .and_then(|pw| pw.scale_factor())
+        .map(|pw| pw.scale_factor())
         .unwrap_or(1.0);
     for (camera_entity, camera, maybe_cursor) in &mut camera_query {
         let maybe_window_ref = match camera.target.normalize(primary_window) {
@@ -185,7 +185,7 @@ pub fn set_camera_window_cursor_position(
                     .map(|rect| rect.min)
                     .unwrap_or_default();
 
-                raw_cursor_position - viewport_position
+                raw_cursor_position - viewport_position.as_vec2()
             });
 
         // update or insert
