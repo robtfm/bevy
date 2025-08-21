@@ -110,16 +110,25 @@ mod sealed {
         CameraProjection + core::fmt::Debug + Send + Sync + downcast_rs::Downcast
     {
         fn clone_box(&self) -> Box<dyn DynCameraProjection>;
+        fn dyn_eq(&self, other: &dyn DynCameraProjection) -> bool;
     }
 
     downcast_rs::impl_downcast!(DynCameraProjection);
 
     impl<T> DynCameraProjection for T
     where
-        T: 'static + CameraProjection + core::fmt::Debug + Send + Sync + Clone,
+        T: 'static + CameraProjection + core::fmt::Debug + Send + Sync + Clone + PartialEq,
     {
         fn clone_box(&self) -> Box<dyn DynCameraProjection> {
             Box::new(self.clone())
+        }
+
+        fn dyn_eq(&self, other: &dyn DynCameraProjection) -> bool {
+            if let Some(other_t) = other.as_any().downcast_ref::<T>() {
+                self == other_t
+            } else {
+                false
+            }
         }
     }
 }
@@ -129,7 +138,7 @@ mod sealed {
 ///
 /// The contained dynamic object can be downcast into a static type using [`CustomProjection::get`].
 #[derive(Component, Debug, Reflect, Deref, DerefMut)]
-#[reflect(Default, Clone)]
+#[reflect(Default, Clone, PartialEq)]
 pub struct CustomProjection {
     #[reflect(ignore)]
     #[deref]
@@ -152,6 +161,12 @@ impl Clone for CustomProjection {
     }
 }
 
+impl PartialEq for CustomProjection {
+    fn eq(&self, other: &Self) -> bool {
+        self.dyn_projection.dyn_eq(&*other.dyn_projection)
+    }
+}
+
 impl CustomProjection {
     /// Returns a reference to the [`CameraProjection`] `P`.
     ///
@@ -171,7 +186,7 @@ impl CustomProjection {
     /// ```
     pub fn get<P>(&self) -> Option<&P>
     where
-        P: CameraProjection + Debug + Send + Sync + Clone + 'static,
+        P: CameraProjection + Debug + Send + Sync + Clone + PartialEq + 'static,
     {
         self.dyn_projection.downcast_ref()
     }
@@ -195,7 +210,7 @@ impl CustomProjection {
     /// ```
     pub fn get_mut<P>(&mut self) -> Option<&mut P>
     where
-        P: CameraProjection + Debug + Send + Sync + Clone + 'static,
+        P: CameraProjection + Debug + Send + Sync + Clone + PartialEq + 'static,
     {
         self.dyn_projection.downcast_mut()
     }
@@ -220,8 +235,8 @@ impl CustomProjection {
 /// frustum: the volume in 3d space that is visible to a camera.
 ///
 /// [`Camera`]: crate::camera::Camera
-#[derive(Component, Debug, Clone, Reflect, From)]
-#[reflect(Component, Default, Debug, Clone)]
+#[derive(Component, Debug, Clone, Reflect, From, PartialEq)]
+#[reflect(Component, Default, Debug, Clone, PartialEq)]
 pub enum Projection {
     Perspective(PerspectiveProjection),
     Orthographic(OrthographicProjection),
@@ -240,7 +255,7 @@ impl Projection {
         // For example, we don't use the `DynCameraProjection`` trait bound, because it is not the
         // trait the user should be implementing - they only need to worry about implementing
         // `CameraProjection`.
-        P: CameraProjection + Debug + Send + Sync + Clone + 'static,
+        P: CameraProjection + Debug + Send + Sync + Clone + PartialEq + 'static,
     {
         Projection::Custom(CustomProjection {
             dyn_projection: Box::new(projection),
@@ -297,8 +312,8 @@ impl Default for Projection {
 }
 
 /// A 3D camera projection in which distant objects appear smaller than close objects.
-#[derive(Debug, Clone, Reflect)]
-#[reflect(Default, Debug, Clone)]
+#[derive(Debug, Clone, Reflect, PartialEq)]
+#[reflect(Default, Debug, Clone, PartialEq)]
 pub struct PerspectiveProjection {
     /// The vertical field of view (FOV) in radians.
     ///
@@ -432,8 +447,8 @@ impl Default for PerspectiveProjection {
 ///    ..OrthographicProjection::default_2d()
 /// });
 /// ```
-#[derive(Default, Debug, Clone, Copy, Reflect, Serialize, Deserialize)]
-#[reflect(Serialize, Deserialize, Default, Clone)]
+#[derive(Default, Debug, Clone, Copy, Reflect, Serialize, Deserialize, PartialEq)]
+#[reflect(Serialize, Deserialize, Default, Clone, PartialEq)]
 pub enum ScalingMode {
     /// Match the viewport size.
     ///
@@ -489,8 +504,8 @@ pub enum ScalingMode {
 ///     ..OrthographicProjection::default_2d()
 /// });
 /// ```
-#[derive(Debug, Clone, Reflect)]
-#[reflect(Debug, FromWorld, Clone)]
+#[derive(Debug, Clone, Reflect, PartialEq)]
+#[reflect(Debug, FromWorld, Clone, PartialEq)]
 pub struct OrthographicProjection {
     /// The distance of the near clipping plane in world units.
     ///
