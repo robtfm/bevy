@@ -119,6 +119,7 @@ pub struct Mesh {
     morph_targets: Option<Handle<Image>>,
     morph_target_names: Option<Vec<String>>,
     pub asset_usage: RenderAssetUsages,
+    pub immediate_upload: bool,
 }
 
 impl Mesh {
@@ -203,6 +204,7 @@ impl Mesh {
             morph_targets: None,
             morph_target_names: None,
             asset_usage,
+            immediate_upload: false,
         }
     }
 

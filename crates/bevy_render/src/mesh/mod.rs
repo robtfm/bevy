@@ -193,6 +193,10 @@ impl RenderAsset for RenderMesh {
     }
 
     fn byte_len(mesh: &Self::SourceAsset) -> Option<usize> {
+        if mesh.immediate_upload {
+            return None;
+        }
+
         let mut vertex_size = 0;
         for attribute_data in mesh.attributes() {
             let vertex_format = attribute_data.0.format;

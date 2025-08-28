@@ -11,7 +11,7 @@ fn main() {
 }
 
 /// Like a perspective projection, but the vanishing point is not centered.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct ObliquePerspectiveProjection {
     horizontal_obliqueness: f32,
     vertical_obliqueness: f32,
