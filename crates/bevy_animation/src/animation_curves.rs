@@ -419,6 +419,7 @@ impl<A: Animatable> AnimationCurveEvaluator for AnimatableCurveEvaluator<A> {
             .pop()
             .ok_or_else(inconsistent::<AnimatableCurveEvaluator<A>>)?
             .value;
+        self.evaluator.stack.clear();
         Ok(())
     }
 }
