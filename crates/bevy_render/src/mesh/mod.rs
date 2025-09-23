@@ -73,7 +73,7 @@ impl Plugin for MeshPlugin {
                 PostUpdate,
                 mark_3d_meshes_as_changed_if_their_assets_changed
                     .ambiguous_with(VisibilitySystems::CalculateBounds)
-                    .before(AssetEvents),
+                    .after(AssetEvents),
             );
 
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
