@@ -106,6 +106,7 @@ struct WinitAppRunnerState<T: Event> {
         >,
         NonSendMut<'static, AccessKitAdapters>,
     )>,
+    scheduled_tick_start: Option<Instant>,
 }
 
 impl<T: Event> WinitAppRunnerState<T> {
@@ -141,6 +142,7 @@ impl<T: Event> WinitAppRunnerState<T> {
             raw_winit_events: Vec::new(),
             _marker: PhantomData,
             event_writer_system_state,
+            scheduled_tick_start: None,
         }
     }
 
@@ -707,10 +709,20 @@ impl<T: Event> WinitAppRunnerState<T> {
                 }
             }
             UpdateMode::Reactive { wait, .. } => {
-                // Set the next timeout, starting from the instant before running app.update() to avoid frame delays
-                if let Some(next) = begin_frame_time.checked_add(wait) {
-                    if self.wait_elapsed {
-                        event_loop.set_control_flow(ControlFlow::WaitUntil(next));
+                // Set the next timeout, starting from the instant we were scheduled to begin
+                if self.wait_elapsed {
+                    self.redraw_requested = true;
+                    
+                    let begin_instant = self.scheduled_tick_start.unwrap_or(begin_frame_time);
+                    if let Some(next) = begin_instant.checked_add(wait) {
+                        let now = Instant::now();
+                        if next < now {
+                            event_loop.set_control_flow(ControlFlow::Poll);
+                            self.scheduled_tick_start = Some(now);
+                        } else {
+                            event_loop.set_control_flow(ControlFlow::WaitUntil(next));
+                            self.scheduled_tick_start = Some(next);
+                        }
                     }
                 }
             }
