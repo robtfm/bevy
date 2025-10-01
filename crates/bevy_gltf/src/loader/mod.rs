@@ -181,6 +181,8 @@ pub struct GltfLoaderSettings {
     pub load_lights: bool,
     /// If true, the loader will include the root of the gltf root node.
     pub include_source: bool,
+    /// force immediate upload for the meshes/textures in this gltf
+    pub immediate_upload: bool,
 }
 
 impl Default for GltfLoaderSettings {
@@ -191,6 +193,7 @@ impl Default for GltfLoaderSettings {
             load_cameras: true,
             load_lights: true,
             include_source: false,
+            immediate_upload: false,
         }
     }
 }
@@ -523,8 +526,7 @@ async fn load_gltf<'a, 'b, 'c>(
             parent_path,
             loader.supported_compressed_formats,
             settings.load_materials,
-            // )
-            // .await?;
+            settings.immediate_upload,
         )?;
         image.process_loaded_texture(load_context, &mut _texture_handles);
     }
@@ -698,6 +700,7 @@ async fn load_gltf<'a, 'b, 'c>(
                 });
             }
 
+            mesh.immediate_upload = settings.immediate_upload;
             let mesh_handle = load_context.add_labeled_asset(primitive_label.to_string(), mesh);
             primitives.push(super::GltfPrimitive::new(
                 &gltf_mesh,
@@ -960,6 +963,7 @@ fn load_image<'a, 'b>(
     parent_path: &'b Path,
     supported_compressed_formats: CompressedImageFormats,
     render_asset_usages: RenderAssetUsages,
+    immediate_upload: bool,
 ) -> Result<ImageOrPath, GltfError> {
     let is_srgb = !linear_textures.contains(&gltf_texture.index());
     let sampler_descriptor = texture_sampler(&gltf_texture);
@@ -1032,6 +1036,11 @@ fn load_image<'a, 'b>(
                 }
             } else {
                 image
+            };
+
+            let image = Image {
+                immediate_upload,
+                ..image
             };
 
             Ok(ImageOrPath::Image {
@@ -1108,6 +1117,11 @@ fn load_image<'a, 'b>(
                     }
                 } else {
                     image
+                };
+
+                let image = Image {
+                    immediate_upload,
+                    ..image
                 };
 
                 Ok(ImageOrPath::Image {

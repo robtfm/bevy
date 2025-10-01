@@ -95,6 +95,7 @@ pub struct ImageLoaderSettings {
     pub is_srgb: bool,
     pub sampler: ImageSampler,
     pub asset_usage: RenderAssetUsages,
+    pub immediate_upload: bool,
 }
 
 impl Default for ImageLoaderSettings {
@@ -104,6 +105,7 @@ impl Default for ImageLoaderSettings {
             is_srgb: true,
             sampler: ImageSampler::Default,
             asset_usage: RenderAssetUsages::default(),
+            immediate_upload: false,
         }
     }
 }
@@ -212,6 +214,11 @@ impl AssetLoader for ImageLoader {
             }
         } else {
             image
+        };
+
+        let image = Image {
+            immediate_upload: settings.immediate_upload,
+            ..image
         };
 
         Ok(image)
