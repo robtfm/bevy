@@ -388,6 +388,7 @@ impl FromWorld for Mesh2dPipeline {
                 sampler,
                 size: image.texture_descriptor.size,
                 mip_level_count: image.texture_descriptor.mip_level_count,
+                had_data: true,
             }
         };
         Mesh2dPipeline {

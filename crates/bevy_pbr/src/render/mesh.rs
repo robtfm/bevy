@@ -1856,6 +1856,7 @@ impl FromWorld for MeshPipeline {
                 sampler,
                 size: image.texture_descriptor.size,
                 mip_level_count: image.texture_descriptor.mip_level_count,
+                had_data: true,
             }
         };
 

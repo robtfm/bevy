@@ -1,4 +1,3 @@
-use bevy_math::Vec3;
 pub use bevy_mesh::*;
 use morph::{MeshMorphWeights, MorphWeights};
 pub mod allocator;
@@ -122,13 +121,7 @@ pub trait MeshAabb {
 
 impl MeshAabb for Mesh {
     fn compute_aabb(&self) -> Option<Aabb> {
-        let Some(VertexAttributeValues::Float32x3(values)) =
-            self.attribute(Mesh::ATTRIBUTE_POSITION)
-        else {
-            return None;
-        };
-
-        Aabb::enclosing(values.iter().map(|p| Vec3::from_slice(p)))
+        self.extents.map(|(min, max)| Aabb::from_min_max(min, max))
     }
 }
 
@@ -206,6 +199,10 @@ impl RenderAsset for RenderMesh {
         let vertex_count = mesh.count_vertices();
         let index_bytes = mesh.get_index_buffer_bytes().map(<[_]>::len).unwrap_or(0);
         Some(vertex_size * vertex_count + index_bytes)
+    }
+
+    fn take_gpu_copy(source: &mut Self::SourceAsset, _: Option<&Self>) -> Option<Self::SourceAsset> {
+        source.take_gpu_copy()
     }
 
     /// Converts the extracted mesh into a [`RenderMesh`].

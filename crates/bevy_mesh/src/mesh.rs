@@ -114,12 +114,13 @@ pub struct Mesh {
     /// Uses a [`BTreeMap`] because, unlike `HashMap`, it has a defined iteration order,
     /// which allows easy stable `VertexBuffers` (i.e. same buffer order)
     #[reflect(ignore, clone)]
-    attributes: BTreeMap<MeshVertexAttributeId, MeshAttributeData>,
+    attributes: Option<BTreeMap<MeshVertexAttributeId, MeshAttributeData>>,
     indices: Option<Indices>,
     morph_targets: Option<Handle<Image>>,
     morph_target_names: Option<Vec<String>>,
     pub asset_usage: RenderAssetUsages,
     pub immediate_upload: bool,
+    pub extents: Option<(Vec3, Vec3)>,
 }
 
 impl Mesh {
@@ -199,12 +200,13 @@ impl Mesh {
     pub fn new(primitive_topology: PrimitiveTopology, asset_usage: RenderAssetUsages) -> Self {
         Mesh {
             primitive_topology,
-            attributes: Default::default(),
+            attributes: Some(Default::default()),
             indices: None,
             morph_targets: None,
             morph_target_names: None,
             asset_usage,
             immediate_upload: false,
+            extents: None,
         }
     }
 
@@ -235,7 +237,27 @@ impl Mesh {
             );
         }
 
+        if attribute.id == Self::ATTRIBUTE_POSITION.id {
+            let VertexAttributeValues::Float32x3(position_values) = &values else {
+                unreachable!(); // we checked above that the values format matches the position format
+            };
+            if position_values.len() > 0 {
+                let mut iter = position_values.into_iter().map(|p| Vec3::from_slice(p));
+                let mut min = iter.next().unwrap();
+                let mut max = min;
+                for v in iter {
+                    min = Vec3::min(min, v);
+                    max = Vec3::max(max, v);
+                }
+                self.extents = Some((min, max))
+            } else {
+                self.extents = None;
+            }
+        }
+
         self.attributes
+            .as_mut()
+            .expect("Mesh has been extracted to RenderWorld")
             .insert(attribute.id, MeshAttributeData { attribute, values });
     }
 
@@ -264,8 +286,14 @@ impl Mesh {
         &mut self,
         attribute: impl Into<MeshVertexAttributeId>,
     ) -> Option<VertexAttributeValues> {
+        let attribute = attribute.into();
+        if attribute == Self::ATTRIBUTE_POSITION.id {
+            self.extents = None;
+        }
         self.attributes
-            .remove(&attribute.into())
+            .as_mut()
+            .expect("Mesh has been extracted to RenderWorld")
+            .remove(&attribute)
             .map(|data| data.values)
     }
 
@@ -280,7 +308,10 @@ impl Mesh {
 
     #[inline]
     pub fn contains_attribute(&self, id: impl Into<MeshVertexAttributeId>) -> bool {
-        self.attributes.contains_key(&id.into())
+        self.attributes
+            .as_ref()
+            .expect("Mesh has been extracted to RenderWorld")
+            .contains_key(&id.into())
     }
 
     /// Retrieves the data currently set to the vertex attribute with the specified [`MeshVertexAttributeId`].
@@ -289,7 +320,11 @@ impl Mesh {
         &self,
         id: impl Into<MeshVertexAttributeId>,
     ) -> Option<&VertexAttributeValues> {
-        self.attributes.get(&id.into()).map(|data| &data.values)
+        self.attributes
+            .as_ref()
+            .expect("Mesh has been extracted to RenderWorld")
+            .get(&id.into())
+            .map(|data| &data.values)
     }
 
     /// Retrieves the full data currently set to the vertex attribute with the specified [`MeshVertexAttributeId`].
@@ -298,7 +333,10 @@ impl Mesh {
         &self,
         id: impl Into<MeshVertexAttributeId>,
     ) -> Option<&MeshAttributeData> {
-        self.attributes.get(&id.into())
+        self.attributes
+            .as_ref()
+            .expect("Mesh has been extracted to RenderWorld")
+            .get(&id.into())
     }
 
     /// Retrieves the data currently set to the vertex attribute with the specified `name` mutably.
@@ -308,6 +346,8 @@ impl Mesh {
         id: impl Into<MeshVertexAttributeId>,
     ) -> Option<&mut VertexAttributeValues> {
         self.attributes
+            .as_mut()
+            .expect("Mesh has been extracted to RenderWorld")
             .get_mut(&id.into())
             .map(|data| &mut data.values)
     }
@@ -317,6 +357,8 @@ impl Mesh {
         &self,
     ) -> impl Iterator<Item = (&MeshVertexAttribute, &VertexAttributeValues)> {
         self.attributes
+            .as_ref()
+            .expect("Mesh has been extracted to RenderWorld")
             .values()
             .map(|data| (&data.attribute, &data.values))
     }
@@ -326,6 +368,8 @@ impl Mesh {
         &mut self,
     ) -> impl Iterator<Item = (&MeshVertexAttribute, &mut VertexAttributeValues)> {
         self.attributes
+            .as_mut()
+            .expect("Mesh has been extracted to RenderWorld")
             .values_mut()
             .map(|data| (&data.attribute, &mut data.values))
     }
@@ -380,6 +424,8 @@ impl Mesh {
     /// Returns the size of a vertex in bytes.
     pub fn get_vertex_size(&self) -> u64 {
         self.attributes
+            .as_ref()
+            .expect("Mesh has been extracted to RenderWorld")
             .values()
             .map(|data| data.attribute.format.size())
             .sum()
@@ -406,10 +452,11 @@ impl Mesh {
         &self,
         mesh_vertex_buffer_layouts: &mut MeshVertexBufferLayouts,
     ) -> MeshVertexBufferLayoutRef {
-        let mut attributes = Vec::with_capacity(self.attributes.len());
-        let mut attribute_ids = Vec::with_capacity(self.attributes.len());
+        let initial_attributes = self.attributes.as_ref().expect("Mesh has been extracted to RenderWorld");
+        let mut attributes = Vec::with_capacity(initial_attributes.len());
+        let mut attribute_ids = Vec::with_capacity(initial_attributes.len());
         let mut accumulated_offset = 0;
-        for (index, data) in self.attributes.values().enumerate() {
+        for (index, data) in initial_attributes.values().enumerate() {
             attribute_ids.push(data.attribute.id);
             attributes.push(VertexAttribute {
                 offset: accumulated_offset,
@@ -435,12 +482,12 @@ impl Mesh {
     /// If the attributes have different vertex counts, the smallest is returned.
     pub fn count_vertices(&self) -> usize {
         let mut vertex_count: Option<usize> = None;
-        for (attribute_id, attribute_data) in &self.attributes {
+        let attributes = self.attributes.as_ref().expect("Mesh has been extracted to RenderWorld");
+        for (attribute_id, attribute_data) in attributes {
             let attribute_len = attribute_data.values.len();
             if let Some(previous_vertex_count) = vertex_count {
                 if previous_vertex_count != attribute_len {
-                    let name = self
-                        .attributes
+                    let name = attributes
                         .get(attribute_id)
                         .map(|data| data.attribute.name.to_string())
                         .unwrap_or_else(|| format!("{attribute_id:?}"));
@@ -483,7 +530,8 @@ impl Mesh {
         let vertex_count = self.count_vertices();
         // bundle into interleaved buffers
         let mut attribute_offset = 0;
-        for attribute_data in self.attributes.values() {
+        let attributes = self.attributes.as_ref().expect("Mesh has been extracted to RenderWorld");
+        for attribute_data in attributes.values() {
             let attribute_size = attribute_data.attribute.format.size() as usize;
             let attributes_bytes = attribute_data.values.get_bytes();
             for (vertex_index, attribute_bytes) in attributes_bytes
@@ -512,7 +560,9 @@ impl Mesh {
             return;
         };
 
-        for attributes in self.attributes.values_mut() {
+        let attributes = self.attributes.as_mut().expect("Mesh has been extracted to RenderWorld");
+
+        for attributes in attributes.values_mut() {
             let indices = indices.iter();
             #[expect(
                 clippy::match_same_arms,
@@ -1227,6 +1277,14 @@ impl Mesh {
                 vertices: [vert0, vert1, vert2],
             })
         }
+    }
+
+    /// Make a clone which takes the attribute data, leaving this instance with no attributes
+    pub fn take_gpu_copy(&mut self) -> Option<Self> {
+        self.attributes.take().map(|attrs| Self {
+            attributes: Some(attrs),
+            ..self.clone()
+        })
     }
 }
 

@@ -19,6 +19,7 @@ pub struct GpuImage {
     pub sampler: Sampler,
     pub size: Extent3d,
     pub mip_level_count: u32,
+    pub had_data: bool,
 }
 
 impl RenderAsset for GpuImage {
@@ -43,12 +44,27 @@ impl RenderAsset for GpuImage {
         }
     }
 
+    fn take_gpu_copy(
+        source: &mut Self::SourceAsset,
+        previous_gpu_asset: Option<&Self>,
+    ) -> Option<Self::SourceAsset> {
+        let data = source.data.take();
+
+        let upload = data.is_some() || previous_gpu_asset.is_none_or(|prev| !prev.had_data);
+
+        upload.then(|| Image {
+            data,
+            ..source.clone()
+        })
+    }
+
     /// Converts the extracted image into a [`GpuImage`].
     fn prepare_asset(
         image: Self::SourceAsset,
         _: AssetId<Self::SourceAsset>,
         (render_device, render_queue, default_sampler): &mut SystemParamItem<Self::Param>,
     ) -> Result<Self, PrepareAssetError<Self::SourceAsset>> {
+        let had_data = image.data.is_some();
         let texture = if let Some(ref data) = image.data {
             render_device.create_texture_with_data(
                 render_queue,
@@ -82,6 +98,7 @@ impl RenderAsset for GpuImage {
             sampler,
             size: image.texture_descriptor.size,
             mip_level_count: image.texture_descriptor.mip_level_count,
+            had_data,
         })
     }
 }
