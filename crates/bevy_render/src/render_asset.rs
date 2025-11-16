@@ -28,10 +28,6 @@ pub enum PrepareAssetError<E: Send + Sync + 'static> {
 #[derive(SystemSet, Clone, PartialEq, Eq, Debug, Hash)]
 pub struct AssetExtractionSystems;
 
-/// Deprecated alias for [`AssetExtractionSystems`].
-#[deprecated(since = "0.17.0", note = "Renamed to `AssetExtractionSystems`.")]
-pub type ExtractAssetsSet = AssetExtractionSystems;
-
 /// Error returned when an asset due for extraction has already been extracted
 #[derive(Debug, Error)]
 pub enum AssetExtractionError {
