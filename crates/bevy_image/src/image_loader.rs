@@ -197,14 +197,32 @@ impl AssetLoader for ImageLoader {
             let asset_usage = image.asset_usage;
             let pixel_size = image.texture_descriptor.format.pixel_size() as u32;
 
+            let empty_image = Image {
+                data: None,
+                texture_descriptor: image.texture_descriptor.clone(),
+                sampler: image.sampler.clone(),
+                texture_view_descriptor: image.texture_view_descriptor.clone(),
+                asset_usage: image.asset_usage,
+                immediate_upload: image.immediate_upload,
+            };
+
             match image.try_into_dynamic() {
                 Ok(dyn_image) => {
+
                     let dyn_image = dyn_image.resize(
                         1024 * 4 / pixel_size,
                         1024 * 4 / pixel_size,
                         image::imageops::FilterType::CatmullRom,
                     );
-                    Image::from_dynamic(dyn_image, is_srgb, asset_usage)
+                    let resized_image = Image::from_dynamic(dyn_image, is_srgb, asset_usage);
+                    let mut texture_descriptor = resized_image.texture_descriptor;
+                    texture_descriptor.usage = empty_image.texture_descriptor.usage;
+                    texture_descriptor.view_formats = empty_image.texture_descriptor.view_formats;
+                    Image {
+                        data: resized_image.data,
+                        texture_descriptor,
+                        ..empty_image
+                    }
                 }
                 Err(e) => {
                     let image = e.image();
