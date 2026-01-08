@@ -1,9 +1,5 @@
 use crate::{
-    extract_resource::ExtractResource,
-    prelude::Shader,
-    render_resource::{ShaderType, UniformBuffer},
-    renderer::{RenderDevice, RenderQueue},
-    Extract, ExtractSchedule, Render, RenderApp, RenderSet,
+    Extract, ExtractSchedule, Render, RenderApp, RenderSet, extract_resource::{ExtractResource, ExtractResourcePlugin}, prelude::Shader, render_resource::{ShaderType, UniformBuffer}, renderer::{RenderDevice, RenderQueue}
 };
 use bevy_app::{App, Plugin};
 use bevy_asset::{load_internal_asset, weak_handle, Handle};
@@ -21,6 +17,8 @@ impl Plugin for GlobalsPlugin {
     fn build(&self, app: &mut App) {
         load_internal_asset!(app, GLOBALS_TYPE_HANDLE, "globals.wgsl", Shader::from_wgsl);
         app.register_type::<GlobalsUniform>();
+
+        app.add_plugins(ExtractResourcePlugin::<UserGlobal>::default());
 
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app
@@ -57,9 +55,12 @@ pub struct GlobalsUniform {
     /// It wraps to zero when it reaches the maximum value of a u32.
     frame_count: u32,
     /// WebGL2 structs must be 16 byte aligned.
-    #[cfg(all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")))]
-    _wasm_padding: f32,
+    // #[cfg(all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")))]
+    user_global: f32,
 }
+
+#[derive(Resource, Clone, ExtractResource, Default)]
+pub struct UserGlobal(pub f32);
 
 /// The buffer containing the [`GlobalsUniform`]
 #[derive(Resource, Default)]
@@ -73,11 +74,13 @@ fn prepare_globals_buffer(
     mut globals_buffer: ResMut<GlobalsBuffer>,
     time: Res<Time>,
     frame_count: Res<FrameCount>,
+    user_global: Option<Res<UserGlobal>>,
 ) {
     let buffer = globals_buffer.buffer.get_mut();
     buffer.time = time.elapsed_secs_wrapped();
     buffer.delta_time = time.delta_secs();
     buffer.frame_count = frame_count.0;
+    buffer.user_global = user_global.as_ref().map(|ug| ug.0).unwrap_or_default();
 
     globals_buffer
         .buffer
