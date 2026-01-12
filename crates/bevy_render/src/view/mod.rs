@@ -120,6 +120,8 @@ impl Plugin for ViewPlugin {
                 VisibilityRangePlugin,
             ));
 
+        app.add_plugins(ExtractComponentPlugin::<ViewUserValue>::default());
+
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app.add_systems(
                 Render,
@@ -575,6 +577,7 @@ pub struct ViewUniform {
     pub color_grading: ColorGradingUniform,
     pub mip_bias: f32,
     pub frame_count: u32,
+    pub user_value: f32,
 }
 
 #[derive(Resource)]
@@ -892,6 +895,9 @@ impl ViewDepthTexture {
     }
 }
 
+#[derive(Component, Clone, ExtractComponent)]
+pub struct ViewUserValue(pub f32);
+
 pub fn prepare_view_uniforms(
     mut commands: Commands,
     render_device: Res<RenderDevice>,
@@ -904,6 +910,7 @@ pub fn prepare_view_uniforms(
         Option<&Frustum>,
         Option<&TemporalJitter>,
         Option<&MipBias>,
+        Option<&ViewUserValue>,
     )>,
     frame_count: Res<FrameCount>,
 ) {
@@ -916,7 +923,7 @@ pub fn prepare_view_uniforms(
     else {
         return;
     };
-    for (entity, extracted_camera, extracted_view, frustum, temporal_jitter, mip_bias) in &views {
+    for (entity, extracted_camera, extracted_view, frustum, temporal_jitter, mip_bias, maybe_user_value) in &views {
         let viewport = extracted_view.viewport.as_vec4();
         let unjittered_projection = extracted_view.clip_from_view;
         let mut clip_from_view = unjittered_projection;
@@ -960,6 +967,7 @@ pub fn prepare_view_uniforms(
                 color_grading: extracted_view.color_grading.clone().into(),
                 mip_bias: mip_bias.unwrap_or(&MipBias(0.0)).0,
                 frame_count: frame_count.0,
+                user_value: maybe_user_value.map(|uv| uv.0).unwrap_or_default(),
             }),
         };
 
