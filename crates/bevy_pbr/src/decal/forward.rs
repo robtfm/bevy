@@ -120,7 +120,7 @@ impl AsBindGroupShaderType<ForwardDecalMaterialExtUniform> for ForwardDecalMater
 }
 
 impl MaterialExtension for ForwardDecalMaterialExt {
-    fn alpha_mode() -> Option<AlphaMode> {
+    fn alpha_mode(_: AlphaMode) -> Option<AlphaMode> {
         Some(AlphaMode::Blend)
     }
 

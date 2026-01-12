@@ -47,7 +47,7 @@ pub trait MaterialExtension: Asset + AsBindGroup + Clone + Sized {
     }
 
     // Returns this material’s AlphaMode. If None is returned, the base material alpha mode will be used.
-    fn alpha_mode() -> Option<AlphaMode> {
+    fn alpha_mode(_base_mode: AlphaMode) -> Option<AlphaMode> {
         None
     }
 
@@ -302,9 +302,10 @@ impl<B: Material, E: MaterialExtension> Material for ExtendedMaterial<B, E> {
     }
 
     fn alpha_mode(&self) -> AlphaMode {
-        match E::alpha_mode() {
+        let base_mode = B::alpha_mode(&self.base);
+        match E::alpha_mode(base_mode) {
             Some(specified) => specified,
-            None => B::alpha_mode(&self.base),
+            None => base_mode,
         }
     }
 
