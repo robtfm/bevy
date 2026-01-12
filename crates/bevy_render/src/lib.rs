@@ -90,6 +90,7 @@ use sync_world::{
 };
 
 use crate::gpu_readback::GpuReadbackPlugin;
+use crate::render_resource::PipelineCompilationMode;
 use crate::{
     camera::CameraPlugin,
     mesh::{MeshPlugin, MorphPlugin, RenderMesh},
@@ -122,7 +123,7 @@ pub struct RenderPlugin {
     pub render_creation: RenderCreation,
     /// If `true`, disables asynchronous pipeline compilation.
     /// This has no effect on macOS, Wasm, iOS, or without the `multi_threaded` feature.
-    pub synchronous_pipeline_compilation: bool,
+    pub pipeline_compilation_mode: PipelineCompilationMode,
     /// Debugging flags that can optionally be set when constructing the renderer.
     pub debug_flags: RenderDebugFlags,
 }
@@ -472,7 +473,7 @@ impl Plugin for RenderPlugin {
                 .insert_resource(PipelineCache::new(
                     device.clone(),
                     render_adapter.clone(),
-                    self.synchronous_pipeline_compilation,
+                    self.pipeline_compilation_mode.clone(),
                 ))
                 .insert_resource(device)
                 .insert_resource(queue)

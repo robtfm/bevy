@@ -12,7 +12,7 @@ use bevy_ecs::{
     system::{Res, ResMut},
 };
 use bevy_platform::collections::{hash_map::EntryRef, HashMap, HashSet};
-use bevy_tasks::Task;
+use bevy_tasks::{BoxedFuture, Task};
 use bevy_utils::default;
 use core::{future::Future, hash::Hash, mem, ops::Deref};
 use naga::valid::Capabilities;
@@ -80,16 +80,30 @@ pub struct CachedPipeline {
 }
 
 /// State of a cached pipeline inserted into a [`PipelineCache`].
-#[derive(Debug)]
 pub enum CachedPipelineState {
     /// The pipeline GPU object is queued for creation.
     Queued,
     /// The pipeline GPU object is being created.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "multi_threaded"))]
     Creating(Task<Result<Pipeline, PipelineCacheError>>),
+    #[cfg(not(all(not(target_arch = "wasm32"), feature = "multi_threaded")))]
+    Creating(Task<Result<Pipeline, PipelineCacheError>>, Box<dyn FnOnce(&PipelineCache) -> CachedPipelineState + Send + Sync>),
+
     /// The pipeline GPU object was created successfully and is available (allocated on the GPU).
     Ok(Pipeline),
     /// An error occurred while trying to create the pipeline GPU object.
     Err(PipelineCacheError),
+}
+
+impl std::fmt::Debug for CachedPipelineState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Queued => write!(f, "Queued"),
+            Self::Creating(arg0, ..) => f.debug_tuple("Creating").field(arg0).finish(),
+            Self::Ok(arg0) => f.debug_tuple("Ok").field(arg0).finish(),
+            Self::Err(arg0) => f.debug_tuple("Err").field(arg0).finish(),
+        }
+    }
 }
 
 impl CachedPipelineState {
@@ -554,6 +568,25 @@ impl LayoutCache {
     }
 }
 
+pub trait PipelineCompilationHandler : Send + Sync + 'static {
+    fn on_compile_start(&self) -> BoxedFuture<'_, ()>;
+    fn on_compile_end(&self) -> BoxedFuture<'_, ()>;
+}
+
+#[derive(Default, Clone)]
+pub enum PipelineCompilationMode {
+    #[default]
+    Async,
+    Sync,
+    AsyncWithNotify(Arc<Box<dyn PipelineCompilationHandler>>),
+}
+
+impl PipelineCompilationMode {
+    pub fn async_with_notify<T: PipelineCompilationHandler>(handler: T) -> Self {
+        Self::AsyncWithNotify(Arc::new(Box::new(handler)))
+    }
+}
+
 /// Cache for render and compute pipelines.
 ///
 /// The cache stores existing render and compute pipelines allocated on the GPU, as well as
@@ -576,7 +609,7 @@ pub struct PipelineCache {
     new_pipelines: Mutex<Vec<CachedPipeline>>,
     /// If `true`, disables asynchronous pipeline compilation.
     /// This has no effect on macOS, wasm, or without the `multi_threaded` feature.
-    synchronous_pipeline_compilation: bool,
+    pipeline_compilation_mode: PipelineCompilationMode,
 }
 
 impl PipelineCache {
@@ -594,7 +627,7 @@ impl PipelineCache {
     pub fn new(
         device: RenderDevice,
         render_adapter: RenderAdapter,
-        synchronous_pipeline_compilation: bool,
+        pipeline_compilation_mode: PipelineCompilationMode,
     ) -> Self {
         Self {
             shader_cache: Arc::new(Mutex::new(ShaderCache::new(&device, &render_adapter))),
@@ -603,7 +636,7 @@ impl PipelineCache {
             waiting_pipelines: default(),
             new_pipelines: default(),
             pipelines: default(),
-            synchronous_pipeline_compilation,
+            pipeline_compilation_mode,
         }
     }
 
@@ -689,11 +722,22 @@ impl PipelineCache {
         }
 
         let state = &mut self.pipelines[id.0].state;
+
+        #[cfg(all(not(target_arch = "wasm32"), feature = "multi_threaded"))]
         if let CachedPipelineState::Creating(task) = state {
             *state = match bevy_tasks::block_on(task) {
                 Ok(p) => CachedPipelineState::Ok(p),
                 Err(e) => CachedPipelineState::Err(e),
             };
+        }
+
+        #[cfg(any(target_arch = "wasm32", not(feature = "multi_threaded")))]
+        if let CachedPipelineState::Creating(..) = state {
+            let taken = std::mem::replace(state, CachedPipelineState::Queued);
+            let CachedPipelineState::Creating(_, sync_task) = taken else {
+                panic!("should be Creating");
+            };
+            self.pipelines[id.0].state = sync_task(self);
         }
     }
 
@@ -792,13 +836,24 @@ impl PipelineCache {
     }
 
     fn start_create_render_pipeline(
-        &mut self,
+        &self,
         id: CachedPipelineId,
         descriptor: RenderPipelineDescriptor,
+    ) -> CachedPipelineState {
+        self.start_create_render_pipeline_internal(id, descriptor, self.pipeline_compilation_mode.clone())
+    }
+
+    fn start_create_render_pipeline_internal(
+        &self,
+        id: CachedPipelineId,
+        descriptor: RenderPipelineDescriptor,
+        mode: PipelineCompilationMode,
     ) -> CachedPipelineState {
         let device = self.device.clone();
         let shader_cache = self.shader_cache.clone();
         let layout_cache = self.layout_cache.clone();
+        #[cfg(not(all(not(target_arch = "wasm32"), feature = "multi_threaded")))]
+        let sync_descriptor = descriptor.clone();
 
         create_pipeline_task(
             async move {
@@ -898,7 +953,9 @@ impl PipelineCache {
                     device.create_render_pipeline(&descriptor),
                 ))
             },
-            self.synchronous_pipeline_compilation,
+            mode,
+            #[cfg(not(all(not(target_arch = "wasm32"), feature = "multi_threaded")))]
+            move |slf: &PipelineCache| slf.start_create_render_pipeline_internal(id, sync_descriptor, PipelineCompilationMode::Sync),
         )
     }
 
@@ -907,9 +964,21 @@ impl PipelineCache {
         id: CachedPipelineId,
         descriptor: ComputePipelineDescriptor,
     ) -> CachedPipelineState {
+        self.start_create_compute_pipeline_internal(id, descriptor, self. pipeline_compilation_mode.clone())
+    }
+
+    fn start_create_compute_pipeline_internal(
+        &self,
+        id: CachedPipelineId,
+        descriptor: ComputePipelineDescriptor,
+        mode: PipelineCompilationMode,
+    ) -> CachedPipelineState {
+
         let device = self.device.clone();
         let shader_cache = self.shader_cache.clone();
         let layout_cache = self.layout_cache.clone();
+        #[cfg(not(all(not(target_arch = "wasm32"), feature = "multi_threaded")))]
+        let sync_descriptor = descriptor.clone();
 
         create_pipeline_task(
             async move {
@@ -957,7 +1026,9 @@ impl PipelineCache {
                     device.create_compute_pipeline(&descriptor),
                 ))
             },
-            self.synchronous_pipeline_compilation,
+            mode,
+            #[cfg(not(all(not(target_arch = "wasm32"), feature = "multi_threaded")))]
+            move |slf: &PipelineCache| slf.start_create_compute_pipeline_internal(id, sync_descriptor, PipelineCompilationMode::Sync),
         )
     }
 
@@ -1003,7 +1074,7 @@ impl PipelineCache {
                 };
             }
 
-            CachedPipelineState::Creating(task) => match bevy_tasks::futures::check_ready(task) {
+            CachedPipelineState::Creating(task, ..) => match bevy_tasks::futures::check_ready(task) {
                 Some(Ok(pipeline)) => {
                     cached_pipeline.state = CachedPipelineState::Ok(pipeline);
                     return;
@@ -1070,37 +1141,36 @@ impl PipelineCache {
     }
 }
 
-#[cfg(all(
-    not(target_arch = "wasm32"),
-    not(target_os = "macos"),
-    feature = "multi_threaded"
-))]
 fn create_pipeline_task(
     task: impl Future<Output = Result<Pipeline, PipelineCacheError>> + Send + 'static,
-    sync: bool,
+    mode: PipelineCompilationMode,
+    #[cfg(not(all(not(target_arch = "wasm32"), feature = "multi_threaded")))]
+    sync_task: impl FnOnce(&PipelineCache) -> CachedPipelineState + Send + Sync + 'static,
 ) -> CachedPipelineState {
-    if !sync {
-        return CachedPipelineState::Creating(bevy_tasks::AsyncComputeTaskPool::get().spawn(task));
-    }
-
-    match futures_lite::future::block_on(task) {
-        Ok(pipeline) => CachedPipelineState::Ok(pipeline),
-        Err(err) => CachedPipelineState::Err(err),
-    }
-}
-
-#[cfg(any(
-    target_arch = "wasm32",
-    target_os = "macos",
-    not(feature = "multi_threaded")
-))]
-fn create_pipeline_task(
-    task: impl Future<Output = Result<Pipeline, PipelineCacheError>> + Send + 'static,
-    _sync: bool,
-) -> CachedPipelineState {
-    match futures_lite::future::block_on(task) {
-        Ok(pipeline) => CachedPipelineState::Ok(pipeline),
-        Err(err) => CachedPipelineState::Err(err),
+    match mode {
+        PipelineCompilationMode::Sync => match futures_lite::future::block_on(task) {
+            Ok(pipeline) => CachedPipelineState::Ok(pipeline),
+            Err(err) => CachedPipelineState::Err(err),
+        },
+        PipelineCompilationMode::Async => {
+            return CachedPipelineState::Creating(
+                bevy_tasks::AsyncComputeTaskPool::get().spawn(task),
+                #[cfg(not(all(not(target_arch = "wasm32"), feature = "multi_threaded")))]
+                Box::new(sync_task),
+            );
+        }
+        PipelineCompilationMode::AsyncWithNotify(pipeline_compilation_handler) => {
+            return CachedPipelineState::Creating(
+                bevy_tasks::AsyncComputeTaskPool::get().spawn(async move {
+                    pipeline_compilation_handler.on_compile_start().await;
+                    let result = task.await;
+                    pipeline_compilation_handler.on_compile_end().await;
+                    result
+                }),
+                #[cfg(not(all(not(target_arch = "wasm32"), feature = "multi_threaded")))]
+                Box::new(sync_task),
+            );
+        }
     }
 }
 
