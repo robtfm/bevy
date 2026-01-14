@@ -1534,18 +1534,20 @@ pub fn prepare_lights(
                 continue;
             }
 
-            let cascades = light
+            let Some(cascades) = light
                 .cascades
                 .get(&entity)
-                .unwrap()
-                .iter()
-                .take(MAX_CASCADES_PER_LIGHT);
-            let frusta = light
+                .map(|c| c.iter().take(MAX_CASCADES_PER_LIGHT))
+            else {
+                continue;
+            };
+            let Some(frusta) = light
                 .frusta
                 .get(&entity)
-                .unwrap()
-                .iter()
-                .take(MAX_CASCADES_PER_LIGHT);
+                .map(|f| f.iter().take(MAX_CASCADES_PER_LIGHT))
+            else {
+                continue;
+            };
 
             let iter = cascades
                 .zip(frusta)
