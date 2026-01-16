@@ -8,7 +8,7 @@ use super::{
     MeshVertexBufferLayouts, MeshWindingInvertError, VertexAttributeValues, VertexBufferLayout,
 };
 use alloc::collections::BTreeMap;
-use bevy_asset::{Asset, Handle, RenderAssetUsages};
+use bevy_asset::{Asset, Handle, RenderAssetTransferPriority, RenderAssetUsages};
 use bevy_image::Image;
 use bevy_math::{primitives::Triangle3d, *};
 use bevy_reflect::Reflect;
@@ -119,7 +119,7 @@ pub struct Mesh {
     morph_targets: Option<Handle<Image>>,
     morph_target_names: Option<Vec<String>>,
     pub asset_usage: RenderAssetUsages,
-    pub immediate_upload: bool,
+    pub transfer_priority: RenderAssetTransferPriority,
     pub extents: Option<(Vec3, Vec3)>,
 }
 
@@ -205,7 +205,7 @@ impl Mesh {
             morph_targets: None,
             morph_target_names: None,
             asset_usage,
-            immediate_upload: false,
+            transfer_priority: Default::default(),
             extents: None,
         }
     }

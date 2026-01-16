@@ -90,6 +90,7 @@ use sync_world::{
 };
 
 use crate::gpu_readback::GpuReadbackPlugin;
+use crate::render_asset::allocate_render_asset_bytes_per_frame_priorities;
 use crate::render_resource::PipelineCompilationMode;
 use crate::{
     camera::CameraPlugin,
@@ -420,7 +421,11 @@ impl Plugin for RenderPlugin {
                 .add_systems(ExtractSchedule, extract_render_asset_bytes_per_frame)
                 .add_systems(
                     Render,
-                    reset_render_asset_bytes_per_frame.in_set(RenderSet::Cleanup),
+                    (
+                        allocate_render_asset_bytes_per_frame_priorities
+                            .in_set(RenderSet::PrepareAssets),
+                        reset_render_asset_bytes_per_frame.in_set(RenderSet::PrepareAssets),
+                    ),
                 );
         }
 

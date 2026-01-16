@@ -8,7 +8,7 @@ use bevy_render::{
     camera::Camera,
     extract_component::{ExtractComponent, ExtractComponentPlugin},
     extract_resource::{ExtractResource, ExtractResourcePlugin},
-    render_asset::{RenderAssetUsages, RenderAssets},
+    render_asset::{RenderAssetTransferPriority, RenderAssetUsages, RenderAssets},
     render_resource::{
         binding_types::{sampler, texture_2d, texture_3d, uniform_buffer},
         *,
@@ -483,6 +483,6 @@ pub fn lut_placeholder() -> Image {
         sampler: ImageSampler::Default,
         texture_view_descriptor: None,
         asset_usage: RenderAssetUsages::RENDER_WORLD,
-        immediate_upload: true,
+        transfer_priority: RenderAssetTransferPriority::Immediate,
     }
 }

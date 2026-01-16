@@ -5,9 +5,11 @@
 use std::time::Duration;
 
 use bevy::{input::common_conditions::input_just_pressed, prelude::*};
+use bevy_render::render_asset::RenderAssetBytesPerFrame;
 
 fn main() {
     App::new()
+        .insert_resource(RenderAssetBytesPerFrame::new_with_priorities(1))
         .add_plugins(DefaultPlugins.set(ImagePlugin::default_nearest())) // prevents blurry sprites
         .add_systems(Startup, setup)
         .add_systems(Update, execute_animations)

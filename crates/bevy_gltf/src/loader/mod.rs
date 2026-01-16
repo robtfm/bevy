@@ -9,8 +9,7 @@ use std::{
 #[cfg(feature = "bevy_animation")]
 use bevy_animation::{prelude::*, AnimationTarget, AnimationTargetId};
 use bevy_asset::{
-    io::Reader, AssetLoadError, AssetLoader, Handle, LoadContext, ReadAssetBytesError,
-    RenderAssetUsages,
+    AssetLoadError, AssetLoader, Handle, LoadContext, ReadAssetBytesError, RenderAssetTransferPriority, RenderAssetUsages, io::Reader
 };
 use bevy_color::{Color, LinearRgba};
 use bevy_core_pipeline::prelude::Camera3d;
@@ -182,7 +181,7 @@ pub struct GltfLoaderSettings {
     /// If true, the loader will include the root of the gltf root node.
     pub include_source: bool,
     /// force immediate upload for the meshes/textures in this gltf
-    pub immediate_upload: bool,
+    pub transfer_priority: RenderAssetTransferPriority,
 }
 
 impl Default for GltfLoaderSettings {
@@ -193,7 +192,7 @@ impl Default for GltfLoaderSettings {
             load_cameras: true,
             load_lights: true,
             include_source: false,
-            immediate_upload: false,
+            transfer_priority: RenderAssetTransferPriority::default(),
         }
     }
 }
@@ -526,7 +525,7 @@ async fn load_gltf<'a, 'b, 'c>(
             parent_path,
             loader.supported_compressed_formats,
             settings.load_materials,
-            settings.immediate_upload,
+            settings.transfer_priority,
         )?;
         image.process_loaded_texture(load_context, &mut _texture_handles);
     }
@@ -644,7 +643,8 @@ async fn load_gltf<'a, 'b, 'c>(
                     let morph_target_image = MorphTargetImage::new(
                         morph_target_reader.map(PrimitiveMorphAttributesIter),
                         mesh.count_vertices(),
-                        RenderAssetUsages::default(),
+                        settings.load_meshes,
+                        settings.transfer_priority,
                     )?;
                     let handle = load_context
                         .add_labeled_asset(morph_targets_label.to_string(), morph_target_image.0);
@@ -700,7 +700,7 @@ async fn load_gltf<'a, 'b, 'c>(
                 });
             }
 
-            mesh.immediate_upload = settings.immediate_upload;
+            mesh.transfer_priority = settings.transfer_priority;
             let mesh_handle = load_context.add_labeled_asset(primitive_label.to_string(), mesh);
             primitives.push(super::GltfPrimitive::new(
                 &gltf_mesh,
@@ -963,7 +963,7 @@ fn load_image<'a, 'b>(
     parent_path: &'b Path,
     supported_compressed_formats: CompressedImageFormats,
     render_asset_usages: RenderAssetUsages,
-    immediate_upload: bool,
+    transfer_priority: RenderAssetTransferPriority,
 ) -> Result<ImageOrPath, GltfError> {
     let is_srgb = !linear_textures.contains(&gltf_texture.index());
     let sampler_descriptor = texture_sampler(&gltf_texture);
@@ -1025,7 +1025,7 @@ fn load_image<'a, 'b>(
                     sampler: image.sampler.clone(),
                     texture_view_descriptor: image.texture_view_descriptor.clone(),
                     asset_usage: image.asset_usage,
-                    immediate_upload: image.immediate_upload,
+                    transfer_priority: image.transfer_priority,
                 };
 
                 match image.try_into_dynamic() {
@@ -1057,7 +1057,7 @@ fn load_image<'a, 'b>(
             };
 
             let image = Image {
-                immediate_upload,
+                transfer_priority,
                 ..image
             };
 
@@ -1124,7 +1124,7 @@ fn load_image<'a, 'b>(
                         sampler: image.sampler.clone(),
                         texture_view_descriptor: image.texture_view_descriptor.clone(),
                         asset_usage: image.asset_usage,
-                        immediate_upload: image.immediate_upload,
+                        transfer_priority: image.transfer_priority,
                     };
 
                     match image.try_into_dynamic() {
@@ -1157,7 +1157,7 @@ fn load_image<'a, 'b>(
                 };
 
                 let image = Image {
-                    immediate_upload,
+                    transfer_priority,
                     ..image
                 };
 

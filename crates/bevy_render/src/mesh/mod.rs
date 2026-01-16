@@ -12,7 +12,7 @@ use crate::{
 };
 use allocator::MeshAllocatorPlugin;
 use bevy_app::{App, Plugin, PostUpdate};
-use bevy_asset::{AssetApp, AssetEvents, AssetId, RenderAssetUsages};
+use bevy_asset::{AssetApp, AssetEvents, AssetId, RenderAssetTransferPriority, RenderAssetUsages};
 use bevy_ecs::{
     prelude::*,
     system::{
@@ -185,11 +185,7 @@ impl RenderAsset for RenderMesh {
         mesh.asset_usage
     }
 
-    fn byte_len(mesh: &Self::SourceAsset) -> Option<usize> {
-        if mesh.immediate_upload {
-            return None;
-        }
-
+    fn transfer_priority(mesh: &Self::SourceAsset) -> (RenderAssetTransferPriority, Option<usize>) {
         let mut vertex_size = 0;
         for attribute_data in mesh.attributes() {
             let vertex_format = attribute_data.0.format;
@@ -198,7 +194,7 @@ impl RenderAsset for RenderMesh {
 
         let vertex_count = mesh.count_vertices();
         let index_bytes = mesh.get_index_buffer_bytes().map(<[_]>::len).unwrap_or(0);
-        Some(vertex_size * vertex_count + index_bytes)
+        (mesh.transfer_priority, Some(vertex_size * vertex_count + index_bytes))
     }
 
     fn take_gpu_copy(source: &mut Self::SourceAsset, _: Option<&Self>) -> Option<Self::SourceAsset> {
@@ -210,6 +206,7 @@ impl RenderAsset for RenderMesh {
         mesh: Self::SourceAsset,
         _: AssetId<Self::SourceAsset>,
         (images, mesh_vertex_buffer_layouts): &mut SystemParamItem<Self::Param>,
+        _: Option<&Self>,
     ) -> Result<Self, PrepareAssetError<Self::SourceAsset>> {
         let morph_targets = match mesh.morph_targets() {
             Some(mt) => {

@@ -1,5 +1,5 @@
 use crate::image::{Image, ImageFormat, ImageType, TextureError};
-use bevy_asset::{io::Reader, AssetLoader, LoadContext, RenderAssetUsages};
+use bevy_asset::{AssetLoader, LoadContext, RenderAssetTransferPriority, RenderAssetUsages, io::Reader};
 use thiserror::Error;
 
 use super::{CompressedImageFormats, ImageSampler};
@@ -95,7 +95,7 @@ pub struct ImageLoaderSettings {
     pub is_srgb: bool,
     pub sampler: ImageSampler,
     pub asset_usage: RenderAssetUsages,
-    pub immediate_upload: bool,
+    pub transfer_priority: RenderAssetTransferPriority,
 }
 
 impl Default for ImageLoaderSettings {
@@ -105,7 +105,7 @@ impl Default for ImageLoaderSettings {
             is_srgb: true,
             sampler: ImageSampler::Default,
             asset_usage: RenderAssetUsages::default(),
-            immediate_upload: false,
+            transfer_priority: RenderAssetTransferPriority::default(),
         }
     }
 }
@@ -203,7 +203,7 @@ impl AssetLoader for ImageLoader {
                 sampler: image.sampler.clone(),
                 texture_view_descriptor: image.texture_view_descriptor.clone(),
                 asset_usage: image.asset_usage,
-                immediate_upload: image.immediate_upload,
+                transfer_priority: image.transfer_priority,
             };
 
             match image.try_into_dynamic() {
@@ -235,7 +235,7 @@ impl AssetLoader for ImageLoader {
         };
 
         let image = Image {
-            immediate_upload: settings.immediate_upload,
+            transfer_priority: settings.transfer_priority,
             ..image
         };
 

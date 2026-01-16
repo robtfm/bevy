@@ -594,10 +594,15 @@ impl<M: UiMaterial> RenderAsset for PreparedUiMaterial<M> {
 
     type Param = (SRes<RenderDevice>, SRes<UiMaterialPipeline<M>>, M::Param);
 
+    fn transfer_priority(_: &Self::SourceAsset) -> (RenderAssetTransferPriority, Option<usize>) {
+        (RenderAssetTransferPriority::Immediate, None)
+    }
+
     fn prepare_asset(
         material: Self::SourceAsset,
         _: AssetId<Self::SourceAsset>,
         (render_device, pipeline, material_param): &mut SystemParamItem<Self::Param>,
+        _: Option<&Self>,
     ) -> Result<Self, PrepareAssetError<Self::SourceAsset>> {
         match material.as_bind_group(&pipeline.ui_layout, render_device, material_param) {
             Ok(prepared) => Ok(PreparedUiMaterial {

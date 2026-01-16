@@ -1,9 +1,11 @@
 //! A simple 3D scene with light shining over a cube sitting on a plane.
 
 use bevy::prelude::*;
+use bevy_render::render_asset::RenderAssetBytesPerFrame;
 
 fn main() {
     App::new()
+        .insert_resource(RenderAssetBytesPerFrame::new(1))
         .add_plugins(DefaultPlugins)
         .add_systems(Startup, setup)
         .run();

@@ -50,3 +50,16 @@ impl Default for RenderAssetUsages {
         RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD
     }
 }
+
+#[derive(Clone, Copy, Debug, Reflect, Serialize, Deserialize, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[reflect(Serialize, Deserialize, Hash, Clone, PartialEq, Debug)]
+pub enum RenderAssetTransferPriority {
+    Priority(i16),
+    Immediate,
+}
+
+impl Default for RenderAssetTransferPriority {
+    fn default() -> Self {
+        Self::Immediate
+    }
+}

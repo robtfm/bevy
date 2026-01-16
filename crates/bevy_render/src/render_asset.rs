@@ -2,20 +2,21 @@ use crate::{
     render_resource::AsBindGroupError, Extract, ExtractSchedule, MainWorld, Render, RenderApp,
     RenderSet, Res,
 };
+use alloc::collections::BTreeMap;
 use bevy_app::{App, Plugin, SubApp};
-pub use bevy_asset::RenderAssetUsages;
 use bevy_asset::{Asset, AssetEvent, AssetId, Assets};
+pub use bevy_asset::{RenderAssetTransferPriority, RenderAssetUsages};
 use bevy_ecs::{
     prelude::{Commands, EventReader, IntoScheduleConfigs, ResMut, Resource},
-    schedule::{ScheduleConfigs, SystemSet},
-    system::{ScheduleSystem, StaticSystemParam, SystemParam, SystemParamItem, SystemState},
+    schedule::SystemSet,
+    system::{StaticSystemParam, SystemParam, SystemParamItem, SystemState},
     world::{FromWorld, Mut},
 };
 use bevy_platform::collections::{HashMap, HashSet};
 use core::marker::PhantomData;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use thiserror::Error;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 #[derive(Debug, Error)]
 pub enum PrepareAssetError<E: Send + Sync + 'static> {
@@ -51,15 +52,21 @@ pub trait RenderAsset: Send + Sync + 'static + Sized {
         RenderAssetUsages::default()
     }
 
-    /// Size of the data the asset will upload to the gpu. Specifying a return value
-    /// will allow the asset to be throttled via [`RenderAssetBytesPerFrame`].
+    /// Priority for GPU transfer, and optionally size of the data the asset will upload to the gpu.
+    /// Using a priority other than TransferPriority::Immediate will allow the asset to be throttled
+    /// via [`RenderAssetBytesPerFrame`].
+    /// Specifying a size will allow the asset size to be counted towards the bytes per frame limit.
+    /// If a RenderAsset does not implement this function, it is immediately uploaded and reports zero size.
     #[inline]
     #[expect(
         unused_variables,
         reason = "The parameters here are intentionally unused by the default implementation; however, putting underscores here will result in the underscores being copied by rust-analyzer's tab completion."
     )]
-    fn byte_len(source_asset: &Self::SourceAsset) -> Option<usize> {
-        None
+    fn transfer_priority(
+        source_asset: &Self::SourceAsset,
+    ) -> (RenderAssetTransferPriority, Option<usize>) {
+        // by default assets are transferred immediately, and do not count towards the frame limit.
+        (RenderAssetTransferPriority::Immediate, None)
     }
 
     /// Prepares the [`RenderAsset::SourceAsset`] for the GPU by transforming it into a [`RenderAsset`].
@@ -69,6 +76,7 @@ pub trait RenderAsset: Send + Sync + 'static + Sized {
         source_asset: Self::SourceAsset,
         asset_id: AssetId<Self::SourceAsset>,
         param: &mut SystemParamItem<Self::Param>,
+        maybe_previous: Option<&Self>,
     ) -> Result<Self, PrepareAssetError<Self::SourceAsset>>;
 
     /// Called whenever the [`RenderAsset::SourceAsset`] has been removed.
@@ -84,7 +92,7 @@ pub trait RenderAsset: Send + Sync + 'static + Sized {
     }
 
     /// Make a copy of the asset to be moved to the gpu. Heavy internal data (pixel data,
-    /// mesh vertex data, etc) should be moved into the copy, leaving this asset with only 
+    /// mesh vertex data, etc) should be moved into the copy, leaving this asset with only
     /// metadata.
     /// A null return value indicates that the asset has already been extracted, and should
     /// not have been modified on the CPU side (as it cannot be transferred to GPU again).
@@ -136,28 +144,52 @@ impl<A: RenderAsset, AFTER: RenderAssetDependency + 'static> Plugin
                     ExtractSchedule,
                     extract_render_asset::<A>.in_set(ExtractAssetsSet),
                 );
-            AFTER::register_system(
-                render_app,
-                prepare_assets::<A>.in_set(RenderSet::PrepareAssets),
-            );
+            AFTER::register_system::<A>(render_app);
         }
     }
 }
 
 // helper to allow specifying dependencies between render assets
 pub trait RenderAssetDependency {
-    fn register_system(render_app: &mut SubApp, system: ScheduleConfigs<ScheduleSystem>);
+    fn register_system<A: RenderAsset>(render_app: &mut SubApp);
 }
 
 impl RenderAssetDependency for () {
-    fn register_system(render_app: &mut SubApp, system: ScheduleConfigs<ScheduleSystem>) {
-        render_app.add_systems(Render, system);
+    fn register_system<A: RenderAsset>(render_app: &mut SubApp) {
+        render_app.add_systems(
+            Render,
+            request_bytes::<A>
+                .after(reset_render_asset_bytes_per_frame)
+                .before(allocate_render_asset_bytes_per_frame_priorities)
+                .in_set(RenderSet::PrepareAssets)
+                .run_if(|bpf: Res<RenderAssetBytesPerFrameLimiter>| bpf.needs_requests()),
+        );
+        render_app.add_systems(
+            Render,
+            prepare_assets::<A>
+                .after(allocate_render_asset_bytes_per_frame_priorities)
+                .in_set(RenderSet::PrepareAssets),
+        );
     }
 }
 
-impl<A: RenderAsset> RenderAssetDependency for A {
-    fn register_system(render_app: &mut SubApp, system: ScheduleConfigs<ScheduleSystem>) {
-        render_app.add_systems(Render, system.after(prepare_assets::<A>));
+impl<AFTER: RenderAsset> RenderAssetDependency for AFTER {
+    fn register_system<A: RenderAsset>(render_app: &mut SubApp) {
+        render_app.add_systems(
+            Render,
+            request_bytes::<A>
+                .after(reset_render_asset_bytes_per_frame)
+                .before(allocate_render_asset_bytes_per_frame_priorities)
+                .in_set(RenderSet::PrepareAssets)
+                .run_if(|bpf: Res<RenderAssetBytesPerFrameLimiter>| bpf.needs_requests()),
+        );
+        render_app.add_systems(
+            Render,
+            prepare_assets::<A>
+                .after(allocate_render_asset_bytes_per_frame_priorities)
+                .after(prepare_assets::<AFTER>)
+                .in_set(RenderSet::PrepareAssets),
+        );
     }
 }
 
@@ -195,7 +227,7 @@ impl<A: RenderAsset> Default for ExtractedAssets<A> {
 /// Stores all GPU representations ([`RenderAsset`])
 /// of [`RenderAsset::SourceAsset`] as long as they exist.
 #[derive(Resource)]
-pub struct RenderAssets<A: RenderAsset>(HashMap<AssetId<A::SourceAsset>, A>);
+pub struct RenderAssets<A: RenderAsset>(HashMap<AssetId<A::SourceAsset>, (A, bool)>);
 
 impl<A: RenderAsset> Default for RenderAssets<A> {
     fn default() -> Self {
@@ -205,27 +237,38 @@ impl<A: RenderAsset> Default for RenderAssets<A> {
 
 impl<A: RenderAsset> RenderAssets<A> {
     pub fn get(&self, id: impl Into<AssetId<A::SourceAsset>>) -> Option<&A> {
-        self.0.get(&id.into())
+        self.0.get(&id.into()).map(|(asset, _)| asset)
+    }
+
+    pub fn get_latest(&self, id: impl Into<AssetId<A::SourceAsset>>) -> Option<&A> {
+        self.0.get(&id.into()).filter(|(_, stale)| !stale).map(|(asset, _)| asset)
     }
 
     pub fn get_mut(&mut self, id: impl Into<AssetId<A::SourceAsset>>) -> Option<&mut A> {
-        self.0.get_mut(&id.into())
+        self.0.get_mut(&id.into()).map(|(asset, _)| asset)
     }
 
     pub fn insert(&mut self, id: impl Into<AssetId<A::SourceAsset>>, value: A) -> Option<A> {
-        self.0.insert(id.into(), value)
+        self.0.insert(id.into(), (value, false)).map(|(asset, _)| asset)
     }
 
     pub fn remove(&mut self, id: impl Into<AssetId<A::SourceAsset>>) -> Option<A> {
-        self.0.remove(&id.into())
+        self.0.remove(&id.into()).map(|(asset, _)| asset)
+    }
+
+    pub fn set_stale(&mut self, id: impl Into<AssetId<A::SourceAsset>>) -> Option<&mut A> {
+        self.0.get_mut(&id.into()).map(|(asset, stale)| {
+            *stale = true;
+            asset
+        })
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (AssetId<A::SourceAsset>, &A)> {
-        self.0.iter().map(|(k, v)| (*k, v))
+        self.0.iter().map(|(k, (asset, _))| (*k, asset))
     }
 
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (AssetId<A::SourceAsset>, &mut A)> {
-        self.0.iter_mut().map(|(k, v)| (*k, v))
+        self.0.iter_mut().map(|(k, (asset, _))| (*k, asset))
     }
 }
 
@@ -337,6 +380,30 @@ impl<A: RenderAsset> Default for PrepareNextFrameAssets<A> {
     }
 }
 
+/// This system iterates all assets of the corresponding [`RenderAsset::SourceAsset`] type
+/// and records the bytes requested for transferring, in order to apply priorities
+/// when the assets are actually prepared
+pub fn request_bytes<A: RenderAsset>(
+    extracted_assets: Res<ExtractedAssets<A>>,
+    prepare_next_frame: Res<PrepareNextFrameAssets<A>>,
+    bpf: Res<RenderAssetBytesPerFrameLimiter>,
+) {
+    for (id, extracted_asset) in &prepare_next_frame.assets {
+        if extracted_assets.removed.contains(id) || extracted_assets.added.contains(id) {
+            // skip previous frame's assets that have been removed or updated
+            continue;
+        }
+
+        let (transfer_priority, maybe_bytes) = A::transfer_priority(extracted_asset);
+        bpf.request_bytes(maybe_bytes, transfer_priority);
+    }
+
+    for (_, extracted_asset) in &extracted_assets.extracted {
+        let (transfer_priority, maybe_bytes) = A::transfer_priority(extracted_asset);
+        bpf.request_bytes(maybe_bytes, transfer_priority);
+    }
+}
+
 /// This system prepares all assets of the corresponding [`RenderAsset::SourceAsset`] type
 /// which where extracted this frame for the GPU.
 pub fn prepare_assets<A: RenderAsset>(
@@ -356,24 +423,24 @@ pub fn prepare_assets<A: RenderAsset>(
             continue;
         }
 
-        let write_bytes = if let Some(size) = A::byte_len(&extracted_asset) {
-            // we could check if available bytes > byte_len here, but we want to make some
-            // forward progress even if the asset is larger than the max bytes per frame.
-            // this way we always write at least one (sized) asset per frame.
-            // in future we could also consider partial asset uploads.
-            if bpf.exhausted() {
-                prepare_next_frame.assets.push((id, extracted_asset));
-                continue;
-            }
-            size
-        } else {
-            0
-        };
+        let (transfer_priority, maybe_bytes) = A::transfer_priority(&extracted_asset);
 
-        match A::prepare_asset(extracted_asset, id, &mut param) {
+        // we could check if available bytes > byte_len here, but we want to make some
+        // forward progress even if the asset is larger than the max bytes per frame.
+        // this way we always write at least one (sized) asset per frame.
+        // in future we could also consider partial asset uploads.
+        if bpf.exhausted(transfer_priority) {
+            prepare_next_frame.assets.push((id, extracted_asset));
+            continue;
+        }
+
+        match A::prepare_asset(extracted_asset, id, &mut param, render_assets.get(id)) {
             Ok(prepared_asset) => {
+                if render_assets.get(id).is_some() {
+                    warn!("accept {id} ({})", std::any::type_name::<A>());
+                }
                 render_assets.insert(id, prepared_asset);
-                bpf.write_bytes(write_bytes);
+                bpf.write_bytes(maybe_bytes, transfer_priority);
                 wrote_asset_count += 1;
             }
             Err(PrepareAssetError::RetryNextUpdate(extracted_asset)) => {
@@ -397,25 +464,27 @@ pub fn prepare_assets<A: RenderAsset>(
         // we remove previous here to ensure that if we are updating the asset then
         // any users will not see the old asset after a new asset is extracted,
         // even if the new asset is not yet ready or we are out of bytes to write.
-        render_assets.remove(id);
+        render_assets.set_stale(id);
+        warn!("set_stale {id} ({})", std::any::type_name::<A>());
 
-        let write_bytes = if let Some(size) = A::byte_len(&extracted_asset) {
-            if bpf.exhausted() {
-                prepare_next_frame.assets.push((id, extracted_asset));
-                continue;
-            }
-            size
-        } else {
-            0
-        };
+        let (transfer_priority, maybe_bytes) = A::transfer_priority(&extracted_asset);
 
-        match A::prepare_asset(extracted_asset, id, &mut param) {
+        if bpf.exhausted(transfer_priority) {
+            warn!("throttle {id} ({})", std::any::type_name::<A>());
+            prepare_next_frame.assets.push((id, extracted_asset));
+            continue;
+        }
+
+        match A::prepare_asset(extracted_asset, id, &mut param, render_assets.get(id)) {
             Ok(prepared_asset) => {
                 render_assets.insert(id, prepared_asset);
-                bpf.write_bytes(write_bytes);
+                bpf.write_bytes(maybe_bytes, transfer_priority);
                 wrote_asset_count += 1;
             }
             Err(PrepareAssetError::RetryNextUpdate(extracted_asset)) => {
+                if render_assets.get(id).is_some() {
+                    warn!("block {id} ({})", std::any::type_name::<A>());
+                }
                 prepare_next_frame.assets.push((id, extracted_asset));
             }
             Err(PrepareAssetError::AsBindGroupError(e)) => {
@@ -427,12 +496,13 @@ pub fn prepare_assets<A: RenderAsset>(
         }
     }
 
-    if bpf.exhausted() && !prepare_next_frame.assets.is_empty() {
+    if bpf.overflowing() && !prepare_next_frame.assets.is_empty() {
         debug!(
-            "{} write budget exhausted with {} assets remaining (wrote {})",
+            "{} write budget exhausted with {} assets remaining (wrote {}), prios look like {:?}",
             core::any::type_name::<A>(),
             prepare_next_frame.assets.len(),
-            wrote_asset_count
+            wrote_asset_count,
+            bpf,
         );
     }
 }
@@ -447,15 +517,24 @@ pub fn extract_render_asset_bytes_per_frame(
     bpf: Extract<Res<RenderAssetBytesPerFrame>>,
     mut bpf_limiter: ResMut<RenderAssetBytesPerFrameLimiter>,
 ) {
-    bpf_limiter.max_bytes = bpf.max_bytes;
+    bpf_limiter.bytes_per_frame = **bpf;
+}
+
+pub fn allocate_render_asset_bytes_per_frame_priorities(
+    mut bpf_limiter: ResMut<RenderAssetBytesPerFrameLimiter>,
+) {
+    bpf_limiter.allocate_priorities();
 }
 
 /// A resource that defines the amount of data allowed to be transferred from CPU to GPU
 /// each frame, preventing choppy frames at the cost of waiting longer for GPU assets
 /// to become available.
-#[derive(Resource, Default)]
-pub struct RenderAssetBytesPerFrame {
-    pub max_bytes: Option<usize>,
+#[derive(Resource, Default, Clone, Copy, Debug)]
+pub enum RenderAssetBytesPerFrame {
+    #[default]
+    Unlimited,
+    MaxBytes(usize),
+    MaxBytesWithPriority(usize),
 }
 
 impl RenderAssetBytesPerFrame {
@@ -467,64 +546,175 @@ impl RenderAssetBytesPerFrame {
     /// To participate, assets should implement [`RenderAsset::byte_len`]. If the default
     /// is not overridden, the assets are assumed to be small enough to upload without restriction.
     pub fn new(max_bytes: usize) -> Self {
-        Self {
-            max_bytes: Some(max_bytes),
-        }
+        Self::MaxBytes(max_bytes)
     }
+
+    pub fn new_with_priorities(max_bytes: usize) -> Self {
+        Self::MaxBytesWithPriority(max_bytes)
+    }
+}
+
+#[derive(Default, Debug)]
+struct RenderAssetPriorityAllocation {
+    requested: AtomicUsize,
+    requested_count: AtomicUsize,
+    written: AtomicUsize,
+    written_count: AtomicUsize,
+    available: usize,
 }
 
 /// A render-world resource that facilitates limiting the data transferred from CPU to GPU
 /// each frame, preventing choppy frames at the cost of waiting longer for GPU assets
 /// to become available.
-#[derive(Resource, Default)]
+#[derive(Resource, Default, Debug)]
 pub struct RenderAssetBytesPerFrameLimiter {
     /// Populated by [`RenderAssetBytesPerFrame`] during extraction.
-    pub max_bytes: Option<usize>,
-    /// Bytes written this frame.
-    pub bytes_written: AtomicUsize,
+    bytes_per_frame: RenderAssetBytesPerFrame,
+    bytes_written: bevy_platform::sync::RwLock<
+        BTreeMap<RenderAssetTransferPriority, RenderAssetPriorityAllocation>,
+    >,
+    overflowing: AtomicBool,
 }
 
 impl RenderAssetBytesPerFrameLimiter {
     /// Reset the available bytes. Called once per frame during extraction by [`crate::RenderPlugin`].
     pub fn reset(&mut self) {
-        if self.max_bytes.is_none() {
-            return;
+        let prios = self.bytes_written.read().unwrap();
+        let was_overflowing = self.overflowing.swap(false, Ordering::Relaxed);
+        if was_overflowing {
+            debug!("bfp priorities: {:?}", self.bytes_written);
         }
-        self.bytes_written.store(0, Ordering::Relaxed);
+
+        drop(prios);
+
+        match self.bytes_per_frame {
+            RenderAssetBytesPerFrame::Unlimited => return,
+            RenderAssetBytesPerFrame::MaxBytes(max_bytes) => {
+                self.bytes_written.write().expect("can't read bpf").insert(
+                    RenderAssetTransferPriority::default(),
+                    RenderAssetPriorityAllocation {
+                        requested: AtomicUsize::new(0),
+                        requested_count: AtomicUsize::new(0),
+                        written: AtomicUsize::new(0),
+                        written_count: AtomicUsize::new(0),
+                        available: max_bytes,
+                    },
+                );
+            }
+            RenderAssetBytesPerFrame::MaxBytesWithPriority(_) => {
+                for value in self.bytes_written.read().expect("can't read bpf").values() {
+                    value.requested.store(0, Ordering::Relaxed);
+                    value.written.store(0, Ordering::Relaxed);
+                    value.requested_count.store(0, Ordering::Relaxed);
+                    value.written_count.store(0, Ordering::Relaxed);
+                }
+            }
+        }
     }
 
-    /// Check how many bytes are available for writing.
-    pub fn available_bytes(&self, required_bytes: usize) -> usize {
-        if let Some(max_bytes) = self.max_bytes {
-            let total_bytes = self
-                .bytes_written
-                .fetch_add(required_bytes, Ordering::Relaxed);
+    pub fn needs_requests(&self) -> bool {
+        matches!(
+            self.bytes_per_frame,
+            RenderAssetBytesPerFrame::MaxBytesWithPriority(_)
+        )
+    }
 
-            // The bytes available is the inverse of the amount we overshot max_bytes
-            if total_bytes >= max_bytes {
-                required_bytes.saturating_sub(total_bytes - max_bytes)
-            } else {
-                required_bytes
+    fn request_bytes(&self, bytes: Option<usize>, priority: RenderAssetTransferPriority) {
+        debug!("request {:?} ~ {:?}", bytes, priority);
+        let priority = match self.bytes_per_frame {
+            RenderAssetBytesPerFrame::Unlimited => return,
+            RenderAssetBytesPerFrame::MaxBytes(_) => RenderAssetTransferPriority::default(),
+            RenderAssetBytesPerFrame::MaxBytesWithPriority(_) => priority,
+        };
+
+        if let Some(bytes_written) = self
+            .bytes_written
+            .read()
+            .expect("can't read bpf")
+            .get(&priority)
+        {
+            if let Some(bytes) = bytes {
+                bytes_written.requested.fetch_add(bytes, Ordering::Relaxed);
             }
+            bytes_written.requested_count.fetch_add(1, Ordering::Relaxed);
         } else {
-            required_bytes
+            self.bytes_written.write().expect("can't write bpf").insert(
+                priority,
+                RenderAssetPriorityAllocation {
+                    requested: AtomicUsize::new(bytes.unwrap_or_default()),
+                    requested_count: AtomicUsize::new(1),
+                    written: AtomicUsize::new(0),
+                    written_count: AtomicUsize::new(0),
+                    available: 0,
+                },
+            );
+        }
+    }
+
+    fn allocate_priorities(&mut self) {
+        let RenderAssetBytesPerFrame::MaxBytesWithPriority(mut max_bytes) = self.bytes_per_frame
+        else {
+            return;
+        };
+
+        for value in self
+            .bytes_written
+            .write()
+            .expect("can't write bpf")
+            .values_mut()
+            // immediate, then priority(i16::max) down to priority(i16::min)
+            .rev()
+        {
+            let requested = value.requested.load(Ordering::Relaxed);
+            value.available = requested.min(max_bytes);
+            max_bytes = max_bytes.saturating_sub(requested);
         }
     }
 
     /// Decreases the available bytes for the current frame.
-    fn write_bytes(&self, bytes: usize) {
-        if self.max_bytes.is_some() && bytes > 0 {
-            self.bytes_written.fetch_add(bytes, Ordering::Relaxed);
+    fn write_bytes(&self, bytes: Option<usize>, priority: RenderAssetTransferPriority) {
+        let priority = match self.bytes_per_frame {
+            RenderAssetBytesPerFrame::Unlimited => return,
+            RenderAssetBytesPerFrame::MaxBytes(_) => RenderAssetTransferPriority::default(),
+            RenderAssetBytesPerFrame::MaxBytesWithPriority(_) => priority,
+        };
+
+        if let Some(bytes_written) = self
+            .bytes_written
+            .read()
+            .expect("can't read bpf")
+            .get(&priority)
+        {
+            if let Some(bytes) = bytes {
+                bytes_written.written.fetch_add(bytes, Ordering::Relaxed);
+            }
+            bytes_written.written_count.fetch_add(1, Ordering::Relaxed);
         }
     }
 
     /// Returns `true` if there are no remaining bytes available for writing this frame.
-    fn exhausted(&self) -> bool {
-        if let Some(max_bytes) = self.max_bytes {
-            let bytes_written = self.bytes_written.load(Ordering::Relaxed);
-            bytes_written >= max_bytes
-        } else {
-            false
+    fn exhausted(&self, priority: RenderAssetTransferPriority) -> bool {
+        let priority = match (self.bytes_per_frame, priority) {
+            (RenderAssetBytesPerFrame::Unlimited, _)
+            | (_, RenderAssetTransferPriority::Immediate) => return false,
+            (RenderAssetBytesPerFrame::MaxBytes(_), _) => RenderAssetTransferPriority::default(),
+            (RenderAssetBytesPerFrame::MaxBytesWithPriority(_), priority) => priority,
+        };
+
+        let exhausted = self
+            .bytes_written
+            .read()
+            .expect("can't read bpf")
+            .get(&priority)
+            .is_none_or(|bw| bw.written.load(Ordering::Relaxed) >= bw.available);
+
+        if exhausted {
+            self.overflowing.store(true, Ordering::Relaxed);
         }
+        exhausted
+    }
+
+    fn overflowing(&self) -> bool {
+        self.overflowing.load(Ordering::Relaxed)
     }
 }

@@ -884,7 +884,7 @@ impl NormalizedRenderTarget {
                 .and_then(|window| window.swap_chain_texture_format),
             NormalizedRenderTarget::Image(image_target) => images
                 .get(&image_target.handle)
-                .map(|image| image.texture_format),
+                .map(|image| image.texture_descriptor.format),
             NormalizedRenderTarget::TextureView(id) => {
                 manual_texture_views.get(id).map(|tex| tex.format)
             }

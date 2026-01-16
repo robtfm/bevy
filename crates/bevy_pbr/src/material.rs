@@ -8,7 +8,9 @@ use crate::meshlet::{
 };
 use crate::*;
 use bevy_asset::prelude::AssetChanged;
-use bevy_asset::{Asset, AssetEvents, AssetId, AssetServer, UntypedAssetId};
+use bevy_asset::{
+    Asset, AssetEvents, AssetId, AssetServer, RenderAssetTransferPriority, UntypedAssetId,
+};
 use bevy_core_pipeline::deferred::{AlphaMask3dDeferred, Opaque3dDeferred};
 use bevy_core_pipeline::prepass::{AlphaMask3dPrepass, Opaque3dPrepass};
 use bevy_core_pipeline::{
@@ -38,6 +40,7 @@ use bevy_render::camera::extract_cameras;
 use bevy_render::mesh::mark_3d_meshes_as_changed_if_their_assets_changed;
 use bevy_render::render_asset::prepare_assets;
 use bevy_render::renderer::RenderQueue;
+use bevy_render::texture::GpuImage;
 use bevy_render::{
     batching::gpu_preprocessing::GpuPreprocessingSupport,
     extract_resource::ExtractResource,
@@ -231,6 +234,10 @@ pub trait Material: Asset + AsBindGroup + Clone + Sized {
         ShaderRef::Default
     }
 
+    fn fallback_material(&self) -> Option<Self> {
+        None
+    }
+
     /// Customizes the default [`RenderPipelineDescriptor`] for a specific entity using the entity's
     /// [`MaterialPipelineKey`] and [`MeshVertexBufferLayoutRef`] as input.
     #[expect(
@@ -283,7 +290,7 @@ where
         app.init_asset::<M>()
             .register_type::<MeshMaterial3d<M>>()
             .init_resource::<EntitiesNeedingSpecialization<M>>()
-            .add_plugins((RenderAssetPlugin::<PreparedMaterial<M>>::default(),))
+            .add_plugins((RenderAssetPlugin::<PreparedMaterial<M>, GpuImage>::default(),))
             .add_systems(
                 PostUpdate,
                 (
@@ -1405,6 +1412,7 @@ impl<M: Material> RenderAsset for PreparedMaterial<M> {
             alpha_mask_deferred_draw_functions,
             material_param,
         ): &mut SystemParamItem<Self::Param>,
+        _: Option<&Self>,
     ) -> Result<Self, PrepareAssetError<Self::SourceAsset>> {
         let draw_opaque_pbr = opaque_draw_functions.read().id::<DrawMaterial<M>>();
         let draw_alpha_mask_pbr = alpha_mask_draw_functions.read().id::<DrawMaterial<M>>();
