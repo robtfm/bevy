@@ -26,6 +26,7 @@ use bevy::{
     window::{PresentMode, WindowResolution},
     winit::{UpdateMode, WinitSettings},
 };
+use bevy_asset::RenderAssetTransferPriority;
 use rand::{seq::IndexedRandom, Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
@@ -322,6 +323,7 @@ fn init_textures(args: &Args, images: &mut Assets<Image>) -> Vec<Handle<Image>> 
                 pixel,
                 TextureFormat::Rgba8UnormSrgb,
                 RenderAssetUsages::RENDER_WORLD,
+                RenderAssetTransferPriority::default(),
             ))
         })
         .collect()

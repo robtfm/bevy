@@ -1124,6 +1124,7 @@ pub fn generate_environment_map_light(
             &[0; 8],
             TextureFormat::Rgba16Float,
             RenderAssetUsages::all(),
+            bevy_asset::RenderAssetTransferPriority::default(),
         );
 
         diffuse.texture_descriptor.usage =
@@ -1147,6 +1148,7 @@ pub fn generate_environment_map_light(
             &[0; 8],
             TextureFormat::Rgba16Float,
             RenderAssetUsages::all(),
+            bevy_asset::RenderAssetTransferPriority::default(),
         );
 
         // Set up for mipmaps
