@@ -16,7 +16,7 @@ use bevy_platform::collections::{HashMap, HashSet};
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use thiserror::Error;
-use tracing::{debug, error, warn};
+use tracing::{debug, error};
 
 #[derive(Debug, Error)]
 pub enum PrepareAssetError<E: Send + Sync + 'static> {
@@ -436,9 +436,6 @@ pub fn prepare_assets<A: RenderAsset>(
 
         match A::prepare_asset(extracted_asset, id, &mut param, render_assets.get(id)) {
             Ok(prepared_asset) => {
-                if render_assets.get(id).is_some() {
-                    warn!("accept {id} ({})", std::any::type_name::<A>());
-                }
                 render_assets.insert(id, prepared_asset);
                 bpf.write_bytes(maybe_bytes, transfer_priority);
                 wrote_asset_count += 1;
@@ -465,12 +462,9 @@ pub fn prepare_assets<A: RenderAsset>(
         // any users will not see the old asset after a new asset is extracted,
         // even if the new asset is not yet ready or we are out of bytes to write.
         render_assets.set_stale(id);
-        warn!("set_stale {id} ({})", std::any::type_name::<A>());
-
         let (transfer_priority, maybe_bytes) = A::transfer_priority(&extracted_asset);
 
         if bpf.exhausted(transfer_priority) {
-            warn!("throttle {id} ({})", std::any::type_name::<A>());
             prepare_next_frame.assets.push((id, extracted_asset));
             continue;
         }
@@ -482,9 +476,6 @@ pub fn prepare_assets<A: RenderAsset>(
                 wrote_asset_count += 1;
             }
             Err(PrepareAssetError::RetryNextUpdate(extracted_asset)) => {
-                if render_assets.get(id).is_some() {
-                    warn!("block {id} ({})", std::any::type_name::<A>());
-                }
                 prepare_next_frame.assets.push((id, extracted_asset));
             }
             Err(PrepareAssetError::AsBindGroupError(e)) => {
