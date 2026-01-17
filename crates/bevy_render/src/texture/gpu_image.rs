@@ -75,6 +75,9 @@ impl RenderAsset for GpuImage {
         {
             if let Some(ref data) = image.data {
                 let pixels_per_block = image.texture_descriptor.format.block_dimensions();
+                if pixels_per_block.0 > 1 {
+                    error!("using block size {pixels_per_block:?}");
+                }
 
                 // queue copy
                 render_queue.write_texture(
