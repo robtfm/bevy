@@ -68,25 +68,26 @@ impl RenderAsset for GpuImage {
         previous_gpu_asset: Option<&Self>,
     ) -> Result<Self, PrepareAssetError<Self::SourceAsset>> {
         let had_data = image.data.is_some();
+
         let texture = if let Some(prev) = previous_gpu_asset
             && prev.texture_descriptor == image.texture_descriptor
-            && image.texture_descriptor.format.block_dimensions() == (1, 1)
+            && let Some(block_bytes) = image.texture_descriptor.format.block_copy_size(None)
         {
             if let Some(ref data) = image.data {
+                let pixels_per_block = image.texture_descriptor.format.block_dimensions();
+
                 // queue copy
                 render_queue.write_texture(
                     prev.texture.as_image_copy(),
                     data,
                     TexelCopyBufferLayout {
                         offset: 0,
-                        bytes_per_row: Some(
-                            image.width() * image.texture_descriptor.format.pixel_size() as u32,
-                        ),
-                        rows_per_image: None,
+                        bytes_per_row: Some(image.width() / pixels_per_block.0 * block_bytes),
+                        rows_per_image: Some(image.height() / pixels_per_block.1),
                     },
                     image.texture_descriptor.size,
                 );
-            } 
+            }
             // TODO else could clear here? probably not necessary as textures without data are only useful as render
             // targets and will normally be overwritten immediately anyway
 
