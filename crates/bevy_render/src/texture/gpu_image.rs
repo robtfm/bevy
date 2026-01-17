@@ -70,6 +70,7 @@ impl RenderAsset for GpuImage {
         let had_data = image.data.is_some();
         let texture = if let Some(prev) = previous_gpu_asset
             && prev.texture_descriptor == image.texture_descriptor
+            && image.texture_descriptor.format.block_dimensions() == (1, 1)
         {
             if let Some(ref data) = image.data {
                 // queue copy
