@@ -8,7 +8,7 @@ use bevy_ecs::system::{lifetimeless::SRes, SystemParamItem};
 use bevy_image::{Image, ImageSampler, TextureFormatPixelInfo};
 use bevy_math::{AspectRatio, UVec2};
 use tracing::{error, warn};
-use wgpu::{Extent3d, TexelCopyBufferLayout, TextureFormat};
+use wgpu::{Extent3d, TexelCopyBufferLayout, TextureFormat, TextureUsages};
 use wgpu_types::{TextureDescriptor, TextureViewDescriptor};
 
 /// The GPU-representation of an [`Image`].
