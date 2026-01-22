@@ -79,6 +79,15 @@ pub trait RenderAsset: Send + Sync + 'static + Sized {
         maybe_previous: Option<&Self>,
     ) -> Result<Self, PrepareAssetError<Self::SourceAsset>>;
 
+    #[inline]
+    #[expect(
+        unused_variables,
+        reason = "The parameters here are intentionally unused by the default implementation; however, putting underscores here will result in the underscores being copied by rust-analyzer's tab completion."
+    )]
+    fn fallback_asset(source: &Self::SourceAsset) -> Option<Self::SourceAsset> {
+        None
+    }
+
     /// Called whenever the [`RenderAsset::SourceAsset`] has been removed.
     ///
     /// You can implement this method if you need to access ECS data (via
@@ -256,10 +265,10 @@ impl<A: RenderAsset> RenderAssets<A> {
         self.0.remove(&id.into()).map(|(asset, _)| asset)
     }
 
-    pub fn set_stale(&mut self, id: impl Into<AssetId<A::SourceAsset>>) -> Option<&mut A> {
+    pub fn set_stale(&mut self, id: impl Into<AssetId<A::SourceAsset>>) -> Option<&A> {
         self.0.get_mut(&id.into()).map(|(asset, stale)| {
             *stale = true;
-            asset
+            &*asset
         })
     }
 
@@ -434,13 +443,21 @@ pub fn prepare_assets<A: RenderAsset>(
             continue;
         }
 
-        match A::prepare_asset(extracted_asset, id, &mut param, render_assets.get(id)) {
+        let prev_asset = render_assets.get(id);
+        match A::prepare_asset(extracted_asset, id, &mut param, prev_asset) {
             Ok(prepared_asset) => {
                 render_assets.insert(id, prepared_asset);
                 bpf.write_bytes(maybe_bytes, transfer_priority);
                 wrote_asset_count += 1;
             }
             Err(PrepareAssetError::RetryNextUpdate(extracted_asset)) => {
+                if prev_asset.is_none()
+                    && let Some(fallback_asset) = A::fallback_asset(&extracted_asset)
+                    && let Ok(prepared_fallback) = A::prepare_asset(fallback_asset, id, &mut param, None)
+                {
+                    render_assets.insert(id, prepared_fallback);
+                    render_assets.set_stale(id);
+                }
                 prepare_next_frame.assets.push((id, extracted_asset));
             }
             Err(PrepareAssetError::AsBindGroupError(e)) => {
@@ -461,7 +478,7 @@ pub fn prepare_assets<A: RenderAsset>(
         // we remove previous here to ensure that if we are updating the asset then
         // any users will not see the old asset after a new asset is extracted,
         // even if the new asset is not yet ready or we are out of bytes to write.
-        render_assets.set_stale(id);
+        let prev_asset = render_assets.set_stale(id);
         let (transfer_priority, maybe_bytes) = A::transfer_priority(&extracted_asset);
 
         if bpf.exhausted(transfer_priority) {
@@ -469,13 +486,20 @@ pub fn prepare_assets<A: RenderAsset>(
             continue;
         }
 
-        match A::prepare_asset(extracted_asset, id, &mut param, render_assets.get(id)) {
+        match A::prepare_asset(extracted_asset, id, &mut param, prev_asset) {
             Ok(prepared_asset) => {
                 render_assets.insert(id, prepared_asset);
                 bpf.write_bytes(maybe_bytes, transfer_priority);
                 wrote_asset_count += 1;
             }
             Err(PrepareAssetError::RetryNextUpdate(extracted_asset)) => {
+                if prev_asset.is_none()
+                    && let Some(fallback_asset) = A::fallback_asset(&extracted_asset)
+                    && let Ok(prepared_fallback) = A::prepare_asset(fallback_asset, id, &mut param, None)
+                {
+                    render_assets.insert(id, prepared_fallback);
+                    render_assets.set_stale(id);
+                }
                 prepare_next_frame.assets.push((id, extracted_asset));
             }
             Err(PrepareAssetError::AsBindGroupError(e)) => {
@@ -627,7 +651,9 @@ impl RenderAssetBytesPerFrameLimiter {
             if let Some(bytes) = bytes {
                 bytes_written.requested.fetch_add(bytes, Ordering::Relaxed);
             }
-            bytes_written.requested_count.fetch_add(1, Ordering::Relaxed);
+            bytes_written
+                .requested_count
+                .fetch_add(1, Ordering::Relaxed);
         } else {
             self.bytes_written.write().expect("can't write bpf").insert(
                 priority,

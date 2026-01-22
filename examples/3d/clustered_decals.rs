@@ -2,6 +2,7 @@
 
 use std::f32::consts::{FRAC_PI_3, PI};
 use std::fmt::{self, Formatter};
+use std::marker::PhantomData;
 use std::process;
 
 use bevy::{
@@ -111,10 +112,14 @@ struct HelpText;
 
 /// A shader extension that demonstrates how to use the `tag` field to customize
 /// the appearance of your decals.
-#[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
-struct CustomDecalExtension {}
+#[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
+struct CustomDecalExtension<B: Material> {
+    _p: PhantomData<fn() -> B>
+}
 
-impl MaterialExtension for CustomDecalExtension {
+impl<B: Material> MaterialExtension for CustomDecalExtension<B> {
+    type Base = B;
+
     fn fragment_shader() -> ShaderRef {
         SHADER_ASSET_PATH.into()
     }
@@ -131,7 +136,7 @@ fn main() {
             ..default()
         }))
         .add_plugins(MaterialPlugin::<
-            ExtendedMaterial<StandardMaterial, CustomDecalExtension>,
+            ExtendedMaterial<CustomDecalExtension<StandardMaterial>>,
         >::default())
         .init_resource::<AppStatus>()
         .add_event::<WidgetClickEvent<Selection>>()
@@ -161,7 +166,7 @@ fn setup(
     render_device: Res<RenderDevice>,
     render_adapter: Res<RenderAdapter>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, CustomDecalExtension>>>,
+    mut materials: ResMut<Assets<ExtendedMaterial<CustomDecalExtension<StandardMaterial>>>>,
 ) {
     // Error out if the clustered decals feature isn't enabled
     if !cfg!(feature = "pbr_clustered_decals") {
@@ -187,7 +192,7 @@ fn setup(
 fn spawn_cube(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<ExtendedMaterial<StandardMaterial, CustomDecalExtension>>,
+    materials: &mut Assets<ExtendedMaterial<CustomDecalExtension<StandardMaterial>>>,
 ) {
     // Rotate the cube a bit just to make it more interesting.
     let mut transform = Transform::IDENTITY;
@@ -200,7 +205,7 @@ fn spawn_cube(
                 base_color: SILVER.into(),
                 ..default()
             },
-            extension: CustomDecalExtension {},
+            extension: CustomDecalExtension::default(),
         })),
         transform,
     ));

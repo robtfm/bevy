@@ -14,7 +14,7 @@ fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugins(MaterialPlugin::<
-            ExtendedMaterial<StandardMaterial, MyExtension>,
+            ExtendedMaterial<MyExtension>,
         >::default())
         .add_systems(Startup, setup)
         .add_systems(Update, rotate_things)
@@ -24,7 +24,7 @@ fn main() {
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, MyExtension>>>,
+    mut materials: ResMut<Assets<ExtendedMaterial<MyExtension>>>,
 ) {
     // sphere
     commands.spawn((
@@ -78,6 +78,8 @@ struct MyExtension {
 }
 
 impl MaterialExtension for MyExtension {
+    type Base = StandardMaterial;
+
     fn fragment_shader() -> ShaderRef {
         SHADER_ASSET_PATH.into()
     }

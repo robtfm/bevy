@@ -128,7 +128,7 @@ struct VoxelCube;
 #[derive(Component)]
 struct VoxelCubeParent;
 
-type VoxelVisualizationMaterial = ExtendedMaterial<StandardMaterial, VoxelVisualizationExtension>;
+type VoxelVisualizationMaterial = ExtendedMaterial<VoxelVisualizationExtension>;
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
 struct VoxelVisualizationExtension {
@@ -629,6 +629,7 @@ fn toggle_voxel_visibility(
 }
 
 impl MaterialExtension for VoxelVisualizationExtension {
+    type Base = StandardMaterial;
     fn fragment_shader() -> ShaderRef {
         SHADER_ASSET_PATH.into()
     }

@@ -34,6 +34,8 @@ pub struct MaterialExtensionKey<E: MaterialExtension> {
 ///
 /// A user type implementing the trait should be used as the `E` generic param in an `ExtendedMaterial` struct.
 pub trait MaterialExtension: Asset + AsBindGroup + Clone + Sized {
+    type Base: Material;
+
     /// Returns this material's vertex shader. If [`ShaderRef::Default`] is returned, the base material mesh vertex shader
     /// will be used.
     fn vertex_shader() -> ShaderRef {
@@ -112,6 +114,15 @@ pub trait MaterialExtension: Asset + AsBindGroup + Clone + Sized {
     ) -> Result<(), SpecializedMeshPipelineError> {
         Ok(())
     }
+
+    #[expect(
+        unused_variables,
+        reason = "The parameters here are intentionally unused by the default implementation; however, putting underscores here will result in the underscores being copied by rust-analyzer's tab completion."
+    )]
+    #[inline]
+    fn fallback_asset(&self, base: &Self::Base) -> Option<ExtendedMaterial<Self>> {
+        None
+    }
 }
 
 /// A material that extends a base [`Material`] with additional shaders and data.
@@ -132,19 +143,19 @@ pub trait MaterialExtension: Asset + AsBindGroup + Clone + Sized {
 #[derive(Asset, Clone, Debug, Reflect)]
 #[reflect(type_path = false)]
 #[reflect(Clone)]
-pub struct ExtendedMaterial<B: Material, E: MaterialExtension> {
-    pub base: B,
+pub struct ExtendedMaterial<E: MaterialExtension> {
+    pub base: E::Base,
     pub extension: E,
 }
 
-impl<B, E> Default for ExtendedMaterial<B, E>
+impl<E> Default for ExtendedMaterial<E>
 where
-    B: Material + Default,
+    E::Base: Material + Default,
     E: MaterialExtension + Default,
 {
     fn default() -> Self {
         Self {
-            base: B::default(),
+            base: E::Base::default(),
             extension: E::default(),
         }
     }
@@ -152,17 +163,17 @@ where
 
 // We don't use the `TypePath` derive here due to a bug where `#[reflect(type_path = false)]`
 // causes the `TypePath` derive to not generate an implementation.
-impl_type_path!((in bevy_pbr::extended_material) ExtendedMaterial<B: Material, E: MaterialExtension>);
+impl_type_path!((in bevy_pbr::extended_material) ExtendedMaterial<E: MaterialExtension>);
 
-impl<B: Material, E: MaterialExtension> AsBindGroup for ExtendedMaterial<B, E> {
-    type Data = (<B as AsBindGroup>::Data, <E as AsBindGroup>::Data);
-    type Param = (<B as AsBindGroup>::Param, <E as AsBindGroup>::Param);
+impl<E: MaterialExtension> AsBindGroup for ExtendedMaterial<E> {
+    type Data = (<E::Base as AsBindGroup>::Data, <E as AsBindGroup>::Data);
+    type Param = (<E::Base as AsBindGroup>::Param, <E as AsBindGroup>::Param);
 
     fn bindless_slot_count() -> Option<BindlessSlabResourceLimit> {
         // We only enable bindless if both the base material and its extension
         // are bindless. If we do enable bindless, we choose the smaller of the
         // two slab size limits.
-        match (B::bindless_slot_count()?, E::bindless_slot_count()?) {
+        match (E::Base::bindless_slot_count()?, E::bindless_slot_count()?) {
             (BindlessSlabResourceLimit::Auto, BindlessSlabResourceLimit::Auto) => {
                 Some(BindlessSlabResourceLimit::Auto)
             }
@@ -192,7 +203,7 @@ impl<B: Material, E: MaterialExtension> AsBindGroup for ExtendedMaterial<B, E> {
         let UnpreparedBindGroup {
             mut bindings,
             data: base_data,
-        } = B::unprepared_bind_group(
+        } = E::Base::unprepared_bind_group(
             &self.base,
             layout,
             render_device,
@@ -231,7 +242,7 @@ impl<B: Material, E: MaterialExtension> AsBindGroup for ExtendedMaterial<B, E> {
         // complain.
         let mut entries = vec![];
         let mut seen_bindings = HashSet::<_>::with_hasher(FixedHasher);
-        for entry in B::bind_group_layout_entries(render_device, force_non_bindless)
+        for entry in E::Base::bind_group_layout_entries(render_device, force_non_bindless)
             .into_iter()
             .chain(E::bind_group_layout_entries(render_device, force_non_bindless).into_iter())
         {
@@ -244,7 +255,7 @@ impl<B: Material, E: MaterialExtension> AsBindGroup for ExtendedMaterial<B, E> {
 
     fn bindless_descriptor() -> Option<BindlessDescriptor> {
         // We're going to combine the two bindless descriptors.
-        let base_bindless_descriptor = B::bindless_descriptor()?;
+        let base_bindless_descriptor = E::Base::bindless_descriptor()?;
         let extended_bindless_descriptor = E::bindless_descriptor()?;
 
         // Combining the buffers and index tables is straightforward.
@@ -286,23 +297,23 @@ impl<B: Material, E: MaterialExtension> AsBindGroup for ExtendedMaterial<B, E> {
     }
 }
 
-impl<B: Material, E: MaterialExtension> Material for ExtendedMaterial<B, E> {
+impl<E: MaterialExtension> Material for ExtendedMaterial<E> {
     fn vertex_shader() -> ShaderRef {
         match E::vertex_shader() {
-            ShaderRef::Default => B::vertex_shader(),
+            ShaderRef::Default => E::Base::vertex_shader(),
             specified => specified,
         }
     }
 
     fn fragment_shader() -> ShaderRef {
         match E::fragment_shader() {
-            ShaderRef::Default => B::fragment_shader(),
+            ShaderRef::Default => E::Base::fragment_shader(),
             specified => specified,
         }
     }
 
     fn alpha_mode(&self) -> AlphaMode {
-        let base_mode = B::alpha_mode(&self.base);
+        let base_mode = E::Base::alpha_mode(&self.base);
         match E::alpha_mode(base_mode) {
             Some(specified) => specified,
             None => base_mode,
@@ -310,49 +321,53 @@ impl<B: Material, E: MaterialExtension> Material for ExtendedMaterial<B, E> {
     }
 
     fn opaque_render_method(&self) -> crate::OpaqueRendererMethod {
-        B::opaque_render_method(&self.base)
+        E::Base::opaque_render_method(&self.base)
     }
 
     fn depth_bias(&self) -> f32 {
-        B::depth_bias(&self.base)
+        E::Base::depth_bias(&self.base)
     }
 
     fn reads_view_transmission_texture(&self) -> bool {
-        B::reads_view_transmission_texture(&self.base)
+        E::Base::reads_view_transmission_texture(&self.base)
     }
 
     fn prepass_vertex_shader() -> ShaderRef {
         match E::prepass_vertex_shader() {
-            ShaderRef::Default => B::prepass_vertex_shader(),
+            ShaderRef::Default => E::Base::prepass_vertex_shader(),
             specified => specified,
         }
     }
 
     fn prepass_fragment_shader() -> ShaderRef {
         match E::prepass_fragment_shader() {
-            ShaderRef::Default => B::prepass_fragment_shader(),
+            ShaderRef::Default => E::Base::prepass_fragment_shader(),
             specified => specified,
         }
     }
 
     fn deferred_vertex_shader() -> ShaderRef {
         match E::deferred_vertex_shader() {
-            ShaderRef::Default => B::deferred_vertex_shader(),
+            ShaderRef::Default => E::Base::deferred_vertex_shader(),
             specified => specified,
         }
     }
 
     fn deferred_fragment_shader() -> ShaderRef {
         match E::deferred_fragment_shader() {
-            ShaderRef::Default => B::deferred_fragment_shader(),
+            ShaderRef::Default => E::Base::deferred_fragment_shader(),
             specified => specified,
         }
+    }
+
+    fn fallback_asset(&self) -> Option<Self> {
+        E::fallback_asset(&self.extension, &self.base)
     }
 
     #[cfg(feature = "meshlet")]
     fn meshlet_mesh_fragment_shader() -> ShaderRef {
         match E::meshlet_mesh_fragment_shader() {
-            ShaderRef::Default => B::meshlet_mesh_fragment_shader(),
+            ShaderRef::Default => E::Base::meshlet_mesh_fragment_shader(),
             specified => specified,
         }
     }
@@ -360,7 +375,7 @@ impl<B: Material, E: MaterialExtension> Material for ExtendedMaterial<B, E> {
     #[cfg(feature = "meshlet")]
     fn meshlet_mesh_prepass_fragment_shader() -> ShaderRef {
         match E::meshlet_mesh_prepass_fragment_shader() {
-            ShaderRef::Default => B::meshlet_mesh_prepass_fragment_shader(),
+            ShaderRef::Default => E::Base::meshlet_mesh_prepass_fragment_shader(),
             specified => specified,
         }
     }
@@ -368,7 +383,7 @@ impl<B: Material, E: MaterialExtension> Material for ExtendedMaterial<B, E> {
     #[cfg(feature = "meshlet")]
     fn meshlet_mesh_deferred_fragment_shader() -> ShaderRef {
         match E::meshlet_mesh_deferred_fragment_shader() {
-            ShaderRef::Default => B::meshlet_mesh_deferred_fragment_shader(),
+            ShaderRef::Default => E::Base::meshlet_mesh_deferred_fragment_shader(),
             specified => specified,
         }
     }
@@ -388,7 +403,7 @@ impl<B: Material, E: MaterialExtension> Material for ExtendedMaterial<B, E> {
             bindless,
             ..
         } = pipeline.clone();
-        let base_pipeline = MaterialPipeline::<B> {
+        let base_pipeline = MaterialPipeline::<E::Base> {
             mesh_pipeline,
             material_layout,
             vertex_shader,
@@ -396,11 +411,11 @@ impl<B: Material, E: MaterialExtension> Material for ExtendedMaterial<B, E> {
             bindless,
             marker: Default::default(),
         };
-        let base_key = MaterialPipelineKey::<B> {
+        let base_key = MaterialPipelineKey::<E::Base> {
             mesh_key: key.mesh_key,
             bind_group_data: key.bind_group_data.0,
         };
-        B::specialize(&base_pipeline, descriptor, layout, base_key)?;
+        E::Base::specialize(&base_pipeline, descriptor, layout, base_key)?;
 
         // Call the extended material's specialize function afterwards
         let MaterialPipeline::<Self> {

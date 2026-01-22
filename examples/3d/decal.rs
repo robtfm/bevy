@@ -37,6 +37,7 @@ fn setup(
             },
             extension: ForwardDecalMaterialExt {
                 depth_fade_factor: 1.0,
+                ..Default::default()    
             },
         })),
         Transform::from_scale(Vec3::splat(4.0)),

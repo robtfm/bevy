@@ -79,6 +79,8 @@ struct ExampleBindlessExtensionUniform {
 }
 
 impl MaterialExtension for ExampleBindlessExtension {
+    type Base = StandardMaterial;
+
     fn fragment_shader() -> ShaderRef {
         SHADER_ASSET_PATH.into()
     }
@@ -99,7 +101,7 @@ fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugins(MaterialPlugin::<
-            ExtendedMaterial<StandardMaterial, ExampleBindlessExtension>,
+            ExtendedMaterial<ExampleBindlessExtension>,
         >::default())
         .add_systems(Startup, setup)
         .add_systems(Update, rotate_sphere)
@@ -111,7 +113,7 @@ fn setup(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, ExampleBindlessExtension>>>,
+    mut materials: ResMut<Assets<ExtendedMaterial<ExampleBindlessExtension>>>,
 ) {
     // Create a gray sphere, modulated with a red-tinted Bevy logo.
     commands.spawn((

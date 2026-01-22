@@ -194,7 +194,7 @@ impl RenderAsset for RenderMesh {
 
         let vertex_count = mesh.count_vertices();
         let index_bytes = mesh.get_index_buffer_bytes().map(<[_]>::len).unwrap_or(0);
-        (mesh.transfer_priority, Some(vertex_size * vertex_count + index_bytes))
+        (/*mesh.transfer_priority*/ RenderAssetTransferPriority::Immediate, Some(vertex_size * vertex_count + index_bytes))
     }
 
     fn take_gpu_copy(source: &mut Self::SourceAsset, _: Option<&Self>) -> Option<Self::SourceAsset> {

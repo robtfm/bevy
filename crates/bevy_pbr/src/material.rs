@@ -8,9 +8,7 @@ use crate::meshlet::{
 };
 use crate::*;
 use bevy_asset::prelude::AssetChanged;
-use bevy_asset::{
-    Asset, AssetEvents, AssetId, AssetServer, RenderAssetTransferPriority, UntypedAssetId,
-};
+use bevy_asset::{Asset, AssetEvents, AssetId, AssetServer, UntypedAssetId};
 use bevy_core_pipeline::deferred::{AlphaMask3dDeferred, Opaque3dDeferred};
 use bevy_core_pipeline::prepass::{AlphaMask3dPrepass, Opaque3dPrepass};
 use bevy_core_pipeline::{
@@ -234,7 +232,7 @@ pub trait Material: Asset + AsBindGroup + Clone + Sized {
         ShaderRef::Default
     }
 
-    fn fallback_material(&self) -> Option<Self> {
+    fn fallback_asset(&self) -> Option<Self> {
         None
     }
 
@@ -1562,6 +1560,10 @@ impl<M: Material> RenderAsset for PreparedMaterial<M> {
 
             Err(other) => Err(PrepareAssetError::AsBindGroupError(other)),
         }
+    }
+
+    fn fallback_asset(source: &Self::SourceAsset) -> Option<Self::SourceAsset> {
+        M::fallback_asset(source)
     }
 
     fn unload_asset(

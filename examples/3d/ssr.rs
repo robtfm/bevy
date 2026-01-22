@@ -1,6 +1,6 @@
 //! Demonstrates screen space reflections in deferred rendering.
 
-use std::ops::Range;
+use std::{marker::PhantomData, ops::Range};
 
 use bevy::{
     color::palettes::css::{BLACK, WHITE},
@@ -38,7 +38,7 @@ static SWITCH_TO_CUBE_HELP_TEXT: &str = "Press Enter to switch to the cube model
 
 /// A custom [`ExtendedMaterial`] that creates animated water ripples.
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
-struct Water {
+struct Water<B: Material> {
     /// The normal map image.
     ///
     /// Note that, like all normal maps, this must not be loaded as sRGB.
@@ -49,6 +49,8 @@ struct Water {
     // Parameters to the water shader.
     #[uniform(102)]
     settings: WaterSettings,
+
+    _p: PhantomData<fn() -> B>,
 }
 
 /// Parameters to the water shader.
@@ -104,7 +106,7 @@ fn main() {
             }),
             ..default()
         }))
-        .add_plugins(MaterialPlugin::<ExtendedMaterial<StandardMaterial, Water>>::default())
+        .add_plugins(MaterialPlugin::<ExtendedMaterial<Water<StandardMaterial>>>::default())
         .add_systems(Startup, setup)
         .add_systems(Update, rotate_model)
         .add_systems(Update, move_camera)
@@ -117,7 +119,7 @@ fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut standard_materials: ResMut<Assets<StandardMaterial>>,
-    mut water_materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, Water>>>,
+    mut water_materials: ResMut<Assets<ExtendedMaterial<Water<StandardMaterial>>>>,
     asset_server: Res<AssetServer>,
     app_settings: Res<AppSettings>,
 ) {
@@ -176,7 +178,7 @@ fn spawn_water(
     commands: &mut Commands,
     asset_server: &AssetServer,
     meshes: &mut Assets<Mesh>,
-    water_materials: &mut Assets<ExtendedMaterial<StandardMaterial, Water>>,
+    water_materials: &mut Assets<ExtendedMaterial<Water<StandardMaterial>>>,
 ) {
     commands.spawn((
         Mesh3d(meshes.add(Plane3d::new(Vec3::Y, Vec2::splat(1.0)))),
@@ -210,6 +212,7 @@ fn spawn_water(
                     octave_scales: vec4(1.0, 2.1, 7.9, 14.9) * 5.0,
                     octave_strengths: vec4(0.16, 0.18, 0.093, 0.044),
                 },
+                _p: PhantomData::default(),
             },
         })),
         Transform::from_scale(Vec3::splat(100.0)),
@@ -278,7 +281,8 @@ fn create_text(app_settings: &AppSettings) -> Text {
     .into()
 }
 
-impl MaterialExtension for Water {
+impl<B: Material> MaterialExtension for Water<B> {
+    type Base = B;
     fn deferred_fragment_shader() -> ShaderRef {
         SHADER_ASSET_PATH.into()
     }

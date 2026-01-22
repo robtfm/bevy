@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+
 use crate::{
     ExtendedMaterial, Material, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline,
     MaterialPlugin, StandardMaterial,
@@ -79,7 +81,7 @@ pub struct ForwardDecal;
 ///
 /// [`StandardMaterial`] comes with out of the box support for forward decals.
 #[expect(type_alias_bounds, reason = "Type alias generics not yet stable")]
-pub type ForwardDecalMaterial<B: Material> = ExtendedMaterial<B, ForwardDecalMaterialExt>;
+pub type ForwardDecalMaterial<B: Material> = ExtendedMaterial<ForwardDecalMaterialExt<B>>;
 
 /// Material extension for a [`ForwardDecal`].
 ///
@@ -90,7 +92,7 @@ pub type ForwardDecalMaterial<B: Material> = ExtendedMaterial<B, ForwardDecalMat
 /// the forward decal code behind an ifdef.
 #[derive(Asset, AsBindGroup, TypePath, Clone, Debug)]
 #[uniform(200, ForwardDecalMaterialExtUniform)]
-pub struct ForwardDecalMaterialExt {
+pub struct ForwardDecalMaterialExt<B: Material> {
     /// Controls the distance threshold for decal blending with surfaces.
     ///
     /// This parameter determines how far away a surface can be before the decal no longer blends
@@ -101,6 +103,7 @@ pub struct ForwardDecalMaterialExt {
     ///
     /// Units are in meters.
     pub depth_fade_factor: f32,
+    pub _p: PhantomData<fn() -> B>,
 }
 
 #[derive(Clone, Default, ShaderType)]
@@ -108,7 +111,7 @@ pub struct ForwardDecalMaterialExtUniform {
     pub inv_depth_fade_factor: f32,
 }
 
-impl AsBindGroupShaderType<ForwardDecalMaterialExtUniform> for ForwardDecalMaterialExt {
+impl<B: Material> AsBindGroupShaderType<ForwardDecalMaterialExtUniform> for ForwardDecalMaterialExt<B> {
     fn as_bind_group_shader_type(
         &self,
         _images: &RenderAssets<GpuImage>,
@@ -119,7 +122,9 @@ impl AsBindGroupShaderType<ForwardDecalMaterialExtUniform> for ForwardDecalMater
     }
 }
 
-impl MaterialExtension for ForwardDecalMaterialExt {
+impl<B: Material> MaterialExtension for ForwardDecalMaterialExt<B> {
+    type Base = B;
+
     fn alpha_mode(_: AlphaMode) -> Option<AlphaMode> {
         Some(AlphaMode::Blend)
     }
@@ -146,10 +151,11 @@ impl MaterialExtension for ForwardDecalMaterialExt {
     }
 }
 
-impl Default for ForwardDecalMaterialExt {
+impl<B: Material> Default for ForwardDecalMaterialExt<B> {
     fn default() -> Self {
         Self {
             depth_fade_factor: 8.0,
+            _p: Default::default(),
         }
     }
 }
