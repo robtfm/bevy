@@ -84,6 +84,7 @@ pub enum CachedPipelineState {
     /// The pipeline GPU object is queued for creation.
     Queued,
     /// The pipeline GPU object is being created.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "multi_threaded"))]
     Creating(Task<Result<Pipeline, PipelineCacheError>>),
     #[cfg(not(all(not(target_arch = "wasm32"), feature = "multi_threaded")))]
     Creating(
