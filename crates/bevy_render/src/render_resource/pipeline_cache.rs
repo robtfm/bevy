@@ -14,7 +14,7 @@ use bevy_ecs::{
 use bevy_platform::collections::{hash_map::EntryRef, HashMap, HashSet};
 use bevy_tasks::{BoxedFuture, Task};
 use bevy_utils::default;
-use core::{future::Future, hash::Hash, mem, ops::Deref};
+use core::{hash::Hash, mem, ops::Deref};
 use naga::valid::Capabilities;
 use std::sync::{Mutex, PoisonError};
 use thiserror::Error;
@@ -84,10 +84,12 @@ pub enum CachedPipelineState {
     /// The pipeline GPU object is queued for creation.
     Queued,
     /// The pipeline GPU object is being created.
-    #[cfg(all(not(target_arch = "wasm32"), feature = "multi_threaded"))]
     Creating(Task<Result<Pipeline, PipelineCacheError>>),
     #[cfg(not(all(not(target_arch = "wasm32"), feature = "multi_threaded")))]
-    Creating(Task<Result<Pipeline, PipelineCacheError>>, Box<dyn FnOnce(&PipelineCache) -> CachedPipelineState + Send + Sync>),
+    Creating(
+        Task<Result<Pipeline, PipelineCacheError>>,
+        Box<dyn FnOnce(&PipelineCache) -> CachedPipelineState + Send + Sync>,
+    ),
 
     /// The pipeline GPU object was created successfully and is available (allocated on the GPU).
     Ok(Pipeline),
@@ -568,9 +570,12 @@ impl LayoutCache {
     }
 }
 
-pub trait PipelineCompilationHandler : Send + Sync + 'static {
-    fn on_compile_start(&self) -> BoxedFuture<'_, ()>;
-    fn on_compile_end(&self) -> BoxedFuture<'_, ()>;
+pub trait PipelineCompilationHandler: Send + Sync + 'static {
+    fn precreate_render_pipeline<'a>(
+        &self,
+        device: &'a RenderDevice,
+        desc: &'a RawRenderPipelineDescriptor,
+    ) -> BoxedFuture<'a, ()>;
 }
 
 #[derive(Default, Clone)]
@@ -578,12 +583,12 @@ pub enum PipelineCompilationMode {
     #[default]
     Async,
     Sync,
-    AsyncWithNotify(Arc<Box<dyn PipelineCompilationHandler>>),
+    AsyncWithHandler(Arc<Box<dyn PipelineCompilationHandler + Send + Sync>>),
 }
 
 impl PipelineCompilationMode {
-    pub fn async_with_notify<T: PipelineCompilationHandler>(handler: T) -> Self {
-        Self::AsyncWithNotify(Arc::new(Box::new(handler)))
+    pub fn async_with_handler<T: PipelineCompilationHandler>(handler: T) -> Self {
+        Self::AsyncWithHandler(Arc::new(Box::new(handler)))
     }
 }
 
@@ -840,7 +845,11 @@ impl PipelineCache {
         id: CachedPipelineId,
         descriptor: RenderPipelineDescriptor,
     ) -> CachedPipelineState {
-        self.start_create_render_pipeline_internal(id, descriptor, self.pipeline_compilation_mode.clone())
+        self.start_create_render_pipeline_internal(
+            id,
+            descriptor,
+            self.pipeline_compilation_mode.clone(),
+        )
     }
 
     fn start_create_render_pipeline_internal(
@@ -852,51 +861,52 @@ impl PipelineCache {
         let device = self.device.clone();
         let shader_cache = self.shader_cache.clone();
         let layout_cache = self.layout_cache.clone();
+        let mode_clone = mode.clone();
         #[cfg(not(all(not(target_arch = "wasm32"), feature = "multi_threaded")))]
         let sync_descriptor = descriptor.clone();
 
         create_pipeline_task(
-            async move {
-                let mut shader_cache = shader_cache.lock().unwrap();
-                let mut layout_cache = layout_cache.lock().unwrap();
+            Box::pin(async move {
+                let (vertex_module, fragment_module) = {
+                    let mut shader_cache = shader_cache.lock().unwrap();
+                    let vertex_module = match shader_cache.get(
+                        &device,
+                        id,
+                        descriptor.vertex.shader.id(),
+                        &descriptor.vertex.shader_defs,
+                    ) {
+                        Ok(module) => module,
+                        Err(err) => return Err(err),
+                    };
 
-                let vertex_module = match shader_cache.get(
-                    &device,
-                    id,
-                    descriptor.vertex.shader.id(),
-                    &descriptor.vertex.shader_defs,
-                ) {
-                    Ok(module) => module,
-                    Err(err) => return Err(err),
-                };
-
-                let fragment_module = match &descriptor.fragment {
-                    Some(fragment) => {
-                        match shader_cache.get(
-                            &device,
-                            id,
-                            fragment.shader.id(),
-                            &fragment.shader_defs,
-                        ) {
-                            Ok(module) => Some(module),
-                            Err(err) => return Err(err),
+                    let fragment_module = match &descriptor.fragment {
+                        Some(fragment) => {
+                            match shader_cache.get(
+                                &device,
+                                id,
+                                fragment.shader.id(),
+                                &fragment.shader_defs,
+                            ) {
+                                Ok(module) => Some(module),
+                                Err(err) => return Err(err),
+                            }
                         }
-                    }
-                    None => None,
+                        None => None,
+                    };
+
+                    (vertex_module, fragment_module)
                 };
 
                 let layout =
                     if descriptor.layout.is_empty() && descriptor.push_constant_ranges.is_empty() {
                         None
                     } else {
-                        Some(layout_cache.get(
+                        Some(layout_cache.lock().unwrap().get(
                             &device,
                             &descriptor.layout,
                             descriptor.push_constant_ranges.to_vec(),
                         ))
                     };
-
-                drop((shader_cache, layout_cache));
 
                 let vertex_buffer_layouts = descriptor
                     .vertex
@@ -949,13 +959,27 @@ impl PipelineCache {
                     cache: None,
                 };
 
+                if let PipelineCompilationMode::AsyncWithHandler(pipeline_compilation_handler) =
+                    mode_clone
+                {
+                    pipeline_compilation_handler
+                        .precreate_render_pipeline(&device, &descriptor)
+                        .await
+                }
+
                 Ok(Pipeline::RenderPipeline(
                     device.create_render_pipeline(&descriptor),
                 ))
-            },
+            }),
             mode,
             #[cfg(not(all(not(target_arch = "wasm32"), feature = "multi_threaded")))]
-            move |slf: &PipelineCache| slf.start_create_render_pipeline_internal(id, sync_descriptor, PipelineCompilationMode::Sync),
+            move |slf: &PipelineCache| {
+                slf.start_create_render_pipeline_internal(
+                    id,
+                    sync_descriptor,
+                    PipelineCompilationMode::Sync,
+                )
+            },
         )
     }
 
@@ -964,7 +988,11 @@ impl PipelineCache {
         id: CachedPipelineId,
         descriptor: ComputePipelineDescriptor,
     ) -> CachedPipelineState {
-        self.start_create_compute_pipeline_internal(id, descriptor, self. pipeline_compilation_mode.clone())
+        self.start_create_compute_pipeline_internal(
+            id,
+            descriptor,
+            self.pipeline_compilation_mode.clone(),
+        )
     }
 
     fn start_create_compute_pipeline_internal(
@@ -973,7 +1001,6 @@ impl PipelineCache {
         descriptor: ComputePipelineDescriptor,
         mode: PipelineCompilationMode,
     ) -> CachedPipelineState {
-
         let device = self.device.clone();
         let shader_cache = self.shader_cache.clone();
         let layout_cache = self.layout_cache.clone();
@@ -981,7 +1008,7 @@ impl PipelineCache {
         let sync_descriptor = descriptor.clone();
 
         create_pipeline_task(
-            async move {
+            Box::pin(async move {
                 let mut shader_cache = shader_cache.lock().unwrap();
                 let mut layout_cache = layout_cache.lock().unwrap();
 
@@ -1025,10 +1052,16 @@ impl PipelineCache {
                 Ok(Pipeline::ComputePipeline(
                     device.create_compute_pipeline(&descriptor),
                 ))
-            },
+            }),
             mode,
             #[cfg(not(all(not(target_arch = "wasm32"), feature = "multi_threaded")))]
-            move |slf: &PipelineCache| slf.start_create_compute_pipeline_internal(id, sync_descriptor, PipelineCompilationMode::Sync),
+            move |slf: &PipelineCache| {
+                slf.start_create_compute_pipeline_internal(
+                    id,
+                    sync_descriptor,
+                    PipelineCompilationMode::Sync,
+                )
+            },
         )
     }
 
@@ -1074,7 +1107,8 @@ impl PipelineCache {
                 };
             }
 
-            CachedPipelineState::Creating(task, ..) => match bevy_tasks::futures::check_ready(task) {
+            CachedPipelineState::Creating(task, ..) => match bevy_tasks::futures::check_ready(task)
+            {
                 Some(Ok(pipeline)) => {
                     cached_pipeline.state = CachedPipelineState::Ok(pipeline);
                     return;
@@ -1142,7 +1176,7 @@ impl PipelineCache {
 }
 
 fn create_pipeline_task(
-    task: impl Future<Output = Result<Pipeline, PipelineCacheError>> + Send + 'static,
+    task: BoxedFuture<'static, Result<Pipeline, PipelineCacheError>>,
     mode: PipelineCompilationMode,
     #[cfg(not(all(not(target_arch = "wasm32"), feature = "multi_threaded")))]
     sync_task: impl FnOnce(&PipelineCache) -> CachedPipelineState + Send + Sync + 'static,
@@ -1152,21 +1186,9 @@ fn create_pipeline_task(
             Ok(pipeline) => CachedPipelineState::Ok(pipeline),
             Err(err) => CachedPipelineState::Err(err),
         },
-        PipelineCompilationMode::Async => {
+        PipelineCompilationMode::Async | PipelineCompilationMode::AsyncWithHandler(_) => {
             return CachedPipelineState::Creating(
                 bevy_tasks::AsyncComputeTaskPool::get().spawn(task),
-                #[cfg(not(all(not(target_arch = "wasm32"), feature = "multi_threaded")))]
-                Box::new(sync_task),
-            );
-        }
-        PipelineCompilationMode::AsyncWithNotify(pipeline_compilation_handler) => {
-            return CachedPipelineState::Creating(
-                bevy_tasks::AsyncComputeTaskPool::get().spawn(async move {
-                    pipeline_compilation_handler.on_compile_start().await;
-                    let result = task.await;
-                    pipeline_compilation_handler.on_compile_end().await;
-                    result
-                }),
                 #[cfg(not(all(not(target_arch = "wasm32"), feature = "multi_threaded")))]
                 Box::new(sync_task),
             );
