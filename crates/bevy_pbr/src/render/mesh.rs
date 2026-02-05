@@ -2104,7 +2104,8 @@ bitflags::bitflags! {
         const HAS_PREVIOUS_MORPH                = 1 << 19;
         const OIT_ENABLED                       = 1 << 20;
         const DISTANCE_FOG                      = 1 << 21;
-        const LAST_FLAG                         = Self::DISTANCE_FOG.bits();
+        const IN_PREPASS                        = 1 << 22;
+        const LAST_FLAG                         = Self::IN_PREPASS.bits();
 
         // Bitfields
         const MSAA_RESERVED_BITS                = Self::MSAA_MASK_BITS << Self::MSAA_SHIFT_BITS;
@@ -2376,6 +2377,7 @@ impl SpecializedMeshPipeline for MeshPipeline {
         let (label, blend, depth_write_enabled);
         let pass = key.intersection(MeshPipelineKey::BLEND_RESERVED_BITS);
         let (mut is_opaque, mut alpha_to_coverage_enabled) = (false, false);
+        let alpha_depth_write = !key.contains(MeshPipelineKey::IN_PREPASS);
         if key.contains(MeshPipelineKey::OIT_ENABLED) && pass == MeshPipelineKey::BLEND_ALPHA {
             label = "oit_mesh_pipeline".into();
             // TODO tail blending would need alpha blending
@@ -2389,7 +2391,7 @@ impl SpecializedMeshPipeline for MeshPipeline {
             blend = Some(BlendState::ALPHA_BLENDING);
             // For the transparent pass, fragments that are closer will be alpha blended
             // but their depth is not written to the depth buffer
-            depth_write_enabled = false;
+            depth_write_enabled = alpha_depth_write;
         } else if pass == MeshPipelineKey::BLEND_PREMULTIPLIED_ALPHA {
             label = "premultiplied_alpha_mesh_pipeline".into();
             blend = Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING);
@@ -2397,7 +2399,7 @@ impl SpecializedMeshPipeline for MeshPipeline {
             shader_defs.push("BLEND_PREMULTIPLIED_ALPHA".into());
             // For the transparent pass, fragments that are closer will be alpha blended
             // but their depth is not written to the depth buffer
-            depth_write_enabled = false;
+            depth_write_enabled = alpha_depth_write;
         } else if pass == MeshPipelineKey::BLEND_MULTIPLY {
             label = "multiply_mesh_pipeline".into();
             blend = Some(BlendState {
@@ -2412,7 +2414,7 @@ impl SpecializedMeshPipeline for MeshPipeline {
             shader_defs.push("BLEND_MULTIPLY".into());
             // For the multiply pass, fragments that are closer will be alpha blended
             // but their depth is not written to the depth buffer
-            depth_write_enabled = false;
+            depth_write_enabled = alpha_depth_write;
         } else if pass == MeshPipelineKey::BLEND_ALPHA_TO_COVERAGE {
             label = "alpha_to_coverage_mesh_pipeline".into();
             // BlendState::REPLACE is not needed here, and None will be potentially much faster in some cases
