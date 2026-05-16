@@ -36,7 +36,7 @@ use info::*;
 use loaders::*;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 #[cfg(all(feature = "wasm_threaded_loader", target_arch = "wasm32"))]
 use spin::{RwLock, RwLockWriteGuard};
@@ -126,15 +126,39 @@ async fn wasm_thread_handle_load_request(request: WasmThreadLoadAssetRequest) {
         sender,
     } = request;
 
-    let result = asset_server
-        .load_with_meta_and_loader_internal(
-            &asset_path,
-            meta,
-            loader,
-            load_dependencies,
-            populate_hashes,
-        )
-        .await;
+    // The load itself. Borrows `asset_server`, `asset_path`.
+    let work = asset_server.load_with_meta_and_loader_internal(
+        &asset_path,
+        meta,
+        loader,
+        load_dependencies,
+        populate_hashes,
+    );
+
+    // Poll every 2s for handle liveness via `AssetInfos::path_to_id`. When the last
+    // strong handle for `asset_path` is dropped, `process_handle_drop_internal`
+    // removes the entry from `path_to_id`, and this branch returns. `FutureExt::or`
+    // then drops `work`, which drops the in-flight reqwest fetch (firing its
+    // `AbortGuard`) and releases any IPFS semaphore permit it was holding.
+    let cancel = async {
+        loop {
+            gloo_timers::future::sleep(core::time::Duration::from_secs(2)).await;
+            if !asset_server
+                .data
+                .infos
+                .read()
+                .path_to_id
+                .contains_key(&asset_path)
+            {
+                debug!("wasm asset thread loader: cancelling in-flight load for `{asset_path}` (no strong handles remain)");
+                return Err(AssetLoadError::LoadCancelled {
+                    path: asset_path.clone(),
+                });
+            }
+        }
+    };
+
+    let result = work.or(cancel).await;
     let _ = sender.send(result).await;
 }
 
@@ -611,11 +635,12 @@ impl AssetServer {
         let owned_handle = handle.clone();
         let server = self.clone();
         let task = IoTaskPool::get().spawn(async move {
-            if let Err(err) = server
+            match server
                 .load_internal(Some(owned_handle), path, false, None)
                 .await
             {
-                error!("{}", err);
+                Ok(_) | Err(AssetLoadError::LoadCancelled { .. }) => {}
+                Err(err) => error!("{}", err),
             }
             drop(guard);
         });
@@ -2117,6 +2142,9 @@ pub enum AssetLoadError {
     },
     #[error("An error occurred in the wasm asset loading thread")]
     WasmThreadLoaderError,
+    #[error("Load of asset '{path}' was cancelled because no strong handles remain")]
+    #[from(ignore)]
+    LoadCancelled { path: AssetPath<'static> },
 }
 
 /// An error that can occur during asset loading.

@@ -70,7 +70,7 @@ impl AssetInfo {
 
 #[derive(Default)]
 pub(crate) struct AssetInfos {
-    path_to_id: HashMap<AssetPath<'static>, TypeIdMap<UntypedAssetId>>,
+    pub(crate) path_to_id: HashMap<AssetPath<'static>, TypeIdMap<UntypedAssetId>>,
     infos: HashMap<UntypedAssetId, AssetInfo>,
     /// If set to `true`, this informs [`AssetInfos`] to track data relevant to watching for changes (such as `load_dependents`)
     /// This should only be set at startup.
