@@ -1,5 +1,7 @@
 use crate::image::{Image, ImageFormat, ImageType, TextureError};
-use bevy_asset::{AssetLoader, LoadContext, RenderAssetTransferPriority, RenderAssetUsages, io::Reader};
+use bevy_asset::{
+    io::Reader, AssetLoader, LoadContext, RenderAssetTransferPriority, RenderAssetUsages,
+};
 use thiserror::Error;
 
 use super::{CompressedImageFormats, ImageSampler};
@@ -190,48 +192,58 @@ impl AssetLoader for ImageLoader {
         };
 
         #[cfg(feature = "reduce_image_sizes")]
-        let image = if image.data.as_ref().unwrap().len() > 1024 * 1024 * 4 {
-            use crate::image::TextureFormatPixelInfo;
+        let image = {
+            // wasm shrinks aggressively for memory; native shrinks only to
+            // dodge wgpu's per-device texture-dim cap (downstream BC7
+            // reprocess replaces with <=1024 anyway).
+            #[cfg(target_arch = "wasm32")]
+            const MAX_BASE_SIZE: u32 = 1024;
+            #[cfg(not(target_arch = "wasm32"))]
+            const MAX_BASE_SIZE: u32 = 8192;
+            let size = image.texture_descriptor.size;
+            if size.width > MAX_BASE_SIZE || size.height > MAX_BASE_SIZE {
+                use crate::image::TextureFormatPixelInfo;
 
-            let is_srgb = image.texture_descriptor.format.is_srgb();
-            let asset_usage = image.asset_usage;
-            let pixel_size = image.texture_descriptor.format.pixel_size() as u32;
+                let is_srgb = image.texture_descriptor.format.is_srgb();
+                let asset_usage = image.asset_usage;
+                let pixel_size = image.texture_descriptor.format.pixel_size() as u32;
 
-            let empty_image = Image {
-                data: None,
-                texture_descriptor: image.texture_descriptor.clone(),
-                sampler: image.sampler.clone(),
-                texture_view_descriptor: image.texture_view_descriptor.clone(),
-                asset_usage: image.asset_usage,
-                transfer_priority: image.transfer_priority,
-            };
+                let empty_image = Image {
+                    data: None,
+                    texture_descriptor: image.texture_descriptor.clone(),
+                    sampler: image.sampler.clone(),
+                    texture_view_descriptor: image.texture_view_descriptor.clone(),
+                    asset_usage: image.asset_usage,
+                    transfer_priority: image.transfer_priority,
+                };
 
-            match image.try_into_dynamic() {
-                Ok(dyn_image) => {
-
-                    let dyn_image = dyn_image.resize(
-                        1024 * 4 / pixel_size,
-                        1024 * 4 / pixel_size,
-                        image::imageops::FilterType::CatmullRom,
-                    );
-                    let resized_image = Image::from_dynamic(dyn_image, is_srgb, asset_usage);
-                    let mut texture_descriptor = resized_image.texture_descriptor;
-                    texture_descriptor.usage = empty_image.texture_descriptor.usage;
-                    texture_descriptor.view_formats = empty_image.texture_descriptor.view_formats;
-                    Image {
-                        data: resized_image.data,
-                        texture_descriptor,
-                        ..empty_image
+                match image.try_into_dynamic() {
+                    Ok(dyn_image) => {
+                        let dyn_image = dyn_image.resize(
+                            MAX_BASE_SIZE * 4 / pixel_size,
+                            MAX_BASE_SIZE * 4 / pixel_size,
+                            image::imageops::FilterType::CatmullRom,
+                        );
+                        let resized_image = Image::from_dynamic(dyn_image, is_srgb, asset_usage);
+                        let mut texture_descriptor = resized_image.texture_descriptor;
+                        texture_descriptor.usage = empty_image.texture_descriptor.usage;
+                        texture_descriptor.view_formats =
+                            empty_image.texture_descriptor.view_formats;
+                        Image {
+                            data: resized_image.data,
+                            texture_descriptor,
+                            ..empty_image
+                        }
+                    }
+                    Err(e) => {
+                        let image = e.image();
+                        tracing::warn!("failed to resize {:?}", image.texture_descriptor.format);
+                        image
                     }
                 }
-                Err(e) => {
-                    let image = e.image();
-                    tracing::warn!("failed to resize {:?}", image.texture_descriptor.format);
-                    image
-                }
+            } else {
+                image
             }
-        } else {
-            image
         };
 
         let image = Image {
