@@ -830,33 +830,15 @@ pub(crate) fn thread_animation_graphs(
     animation_graphs: Res<Assets<AnimationGraph>>,
     mut animation_graph_asset_events: EventReader<AssetEvent<AnimationGraph>>,
 ) {
+    // Re-thread modified graphs and drop removed ones from asset events.
     for animation_graph_asset_event in animation_graph_asset_events.read() {
         match *animation_graph_asset_event {
             AssetEvent::Added { id }
             | AssetEvent::Modified { id }
             | AssetEvent::LoadedWithDependencies { id } => {
-                // Fetch the animation graph.
-                let Some(animation_graph) = animation_graphs.get(id) else {
-                    continue;
-                };
-
-                // Reuse the allocation if possible.
-                let mut threaded_animation_graph =
-                    threaded_animation_graphs.0.remove(&id).unwrap_or_default();
-                threaded_animation_graph.clear();
-
-                // Recursively thread the graph in postorder.
-                threaded_animation_graph.init(animation_graph);
-                threaded_animation_graph.build_from(
-                    &animation_graph.graph,
-                    animation_graph.root,
-                    0,
-                );
-
-                // Write in the threaded graph.
-                threaded_animation_graphs
-                    .0
-                    .insert(id, threaded_animation_graph);
+                if let Some(animation_graph) = animation_graphs.get(id) {
+                    thread_animation_graph(&mut threaded_animation_graphs, id, animation_graph);
+                }
             }
 
             AssetEvent::Removed { id } => {
@@ -865,6 +847,37 @@ pub(crate) fn thread_animation_graphs(
             AssetEvent::Unused { .. } => {}
         }
     }
+
+    // Also thread any graph that exists but hasn't been threaded yet. A graph created
+    // this frame (e.g. an `AnimationGraph` built for a just-spawned animated scene) is
+    // not reported via `AssetEvent` until the `AssetEvents` set runs, which is ordered
+    // after the animation systems — so the event-only path threads it a frame late, and
+    // `animate_targets` skips it for one frame, rendering bind/T-pose. Threading
+    // freshly-present graphs here closes that gap the same frame they're created.
+    for (id, animation_graph) in animation_graphs.iter() {
+        if !threaded_animation_graphs.0.contains_key(&id) {
+            thread_animation_graph(&mut threaded_animation_graphs, id, animation_graph);
+        }
+    }
+}
+
+/// Builds (or rebuilds) the [`ThreadedAnimationGraph`] acceleration structure for a
+/// single [`AnimationGraph`], reusing any existing allocation for that id.
+fn thread_animation_graph(
+    threaded_animation_graphs: &mut ThreadedAnimationGraphs,
+    id: AssetId<AnimationGraph>,
+    animation_graph: &AnimationGraph,
+) {
+    // Reuse the allocation if possible.
+    let mut threaded_animation_graph = threaded_animation_graphs.0.remove(&id).unwrap_or_default();
+    threaded_animation_graph.clear();
+
+    // Recursively thread the graph in postorder.
+    threaded_animation_graph.init(animation_graph);
+    threaded_animation_graph.build_from(&animation_graph.graph, animation_graph.root, 0);
+
+    // Write in the threaded graph.
+    threaded_animation_graphs.0.insert(id, threaded_animation_graph);
 }
 
 impl ThreadedAnimationGraph {
