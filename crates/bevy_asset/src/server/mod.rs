@@ -86,7 +86,7 @@ pub(crate) struct WasmThreadLoadAssetRequest {
     loader: Arc<dyn ErasedAssetLoader>,
     load_dependencies: bool,
     populate_hashes: bool,
-    sender: async_channel::Sender<
+    sender: futures_channel::mpsc::UnboundedSender<
         Result<
             (
                 ErasedLoadedAsset,
@@ -100,7 +100,7 @@ pub(crate) struct WasmThreadLoadAssetRequest {
 
 #[cfg(all(feature = "wasm_threaded_loader", target_arch = "wasm32"))]
 pub fn init_thread_loader() -> super::WasmLoaderHandle {
-    let (load_request_sender, load_request_receiver) = async_channel::unbounded();
+    let (load_request_sender, load_request_receiver) = futures_channel::mpsc::unbounded();
     wasm_bindgen_futures::spawn_local(thread_loader(load_request_receiver));
     super::WasmLoaderHandle {
         load_request_sender,
@@ -108,8 +108,8 @@ pub fn init_thread_loader() -> super::WasmLoaderHandle {
 }
 
 #[cfg(all(feature = "wasm_threaded_loader", target_arch = "wasm32"))]
-async fn thread_loader(rx: async_channel::Receiver<WasmThreadLoadAssetRequest>) {
-    while let Ok(thread_load_request) = rx.recv().await {
+async fn thread_loader(mut rx: futures_channel::mpsc::UnboundedReceiver<WasmThreadLoadAssetRequest>) {
+    while let Some(thread_load_request) = rx.next().await {
         wasm_bindgen_futures::spawn_local(wasm_thread_handle_load_request(thread_load_request));
     }
 }
@@ -159,7 +159,7 @@ async fn wasm_thread_handle_load_request(request: WasmThreadLoadAssetRequest) {
     };
 
     let result = work.or(cancel).await;
-    let _ = sender.send(result).await;
+    let _ = sender.unbounded_send(result);
 }
 
 /// The "asset mode" the server is currently in.
@@ -1531,12 +1531,12 @@ impl AssetServer {
         AssetLoadError,
     > {
         if let Some(wasm_loader_handle) = self.data.wasm_loader_handle.as_ref() {
-            let (sender, receiver) = async_channel::bounded(1);
+            let (sender, mut receiver) = futures_channel::mpsc::unbounded();
             let asset_server = self.clone();
             let asset_path = asset_path.clone().into_owned();
             wasm_loader_handle
                 .load_request_sender
-                .send(WasmThreadLoadAssetRequest {
+                .unbounded_send(WasmThreadLoadAssetRequest {
                     asset_server,
                     asset_path,
                     meta,
@@ -1545,9 +1545,8 @@ impl AssetServer {
                     populate_hashes,
                     sender,
                 })
-                .await
-                .unwrap();
-            receiver.recv().await.unwrap()
+                .unwrap_or_else(|_| panic!("asset load request channel closed"));
+            receiver.next().await.unwrap()
         } else {
             self.load_with_meta_and_loader_internal(
                 asset_path,

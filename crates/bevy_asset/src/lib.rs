@@ -241,7 +241,7 @@ compile_error!("wasm_threaded_loader feature requires target-feature=\"atomics\"
 #[cfg(all(feature = "wasm_threaded_loader", target_arch = "wasm32"))]
 #[derive(Clone)]
 pub struct WasmLoaderHandle {
-    load_request_sender: async_channel::Sender<WasmThreadLoadAssetRequest>,
+    load_request_sender: futures_channel::mpsc::UnboundedSender<WasmThreadLoadAssetRequest>,
 }
 
 /// Provides "asset" loading and processing functionality. An [`Asset`] is a "runtime value" that is loaded from an [`AssetSource`],
