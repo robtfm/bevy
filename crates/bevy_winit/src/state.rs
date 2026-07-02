@@ -734,7 +734,7 @@ impl<T: Event> WinitAppRunnerState<T> {
                 // Set the next timeout, starting from the instant we were scheduled to begin
                 if self.wait_elapsed {
                     self.redraw_requested = true;
-                    
+
                     let begin_instant = self.scheduled_tick_start.unwrap_or(begin_frame_time);
                     if let Some(next) = begin_instant.checked_add(wait) {
                         let now = Instant::now();
@@ -803,10 +803,16 @@ impl<T: Event> WinitAppRunnerState<T> {
     /// `WinitWindowPressedKeys`, synthesizing `KeyboardInput` events for any
     /// modifier key whose transition winit never delivered as a key event.
     /// That happens when the OS consumes a shortcut chord (the keyup lands
-    /// elsewhere) or when focus returns with a modifier already held (the
-    /// keydown predates focus). Winit re-derives modifier state from every
-    /// keyboard/pointer event, so a stale modifier heals on the next input
-    /// event even when no focus transition was ever reported.
+    /// elsewhere — e.g. the macOS Cmd+Shift+5 screen-capture overlay takes
+    /// the keyups without any focus transition, especially on the web) or
+    /// when focus returns with a modifier already held (the keydown predates
+    /// focus). Winit re-derives modifier state from input events, so a stale
+    /// modifier heals on the next input event even when no focus transition
+    /// was ever reported.
+    ///
+    /// Running at end-of-batch means the batch's real key events have
+    /// already been applied to `WinitWindowPressedKeys`, so ordinary
+    /// modifier presses and releases synthesize nothing.
     fn reconcile_pending_modifiers(&mut self) {
         if self.pending_modifiers.is_empty() {
             return;
@@ -816,73 +822,77 @@ impl<T: Event> WinitAppRunnerState<T> {
         let mut synthesized = Vec::new();
 
         for (window, mods) in pending {
-            let Some(mut pressed_keys) =
-                self.world_mut().get_mut::<WinitWindowPressedKeys>(window)
+            let Some(mut pressed_keys) = self.world_mut().get_mut::<WinitWindowPressedKeys>(window)
             else {
                 continue;
             };
 
             let state = mods.state();
-            for (reported, logical_key, sides) in [
+            for (key_codes, logical_key, group_pressed) in [
                 (
-                    state.super_key(),
-                    Key::Super,
                     [
                         (KeyCode::SuperLeft, mods.lsuper_state()),
                         (KeyCode::SuperRight, mods.rsuper_state()),
                     ],
+                    Key::Super,
+                    state.super_key(),
                 ),
                 (
-                    state.control_key(),
-                    Key::Control,
                     [
                         (KeyCode::ControlLeft, mods.lcontrol_state()),
                         (KeyCode::ControlRight, mods.rcontrol_state()),
                     ],
+                    Key::Control,
+                    state.control_key(),
                 ),
                 (
-                    state.alt_key(),
-                    Key::Alt,
                     [
                         (KeyCode::AltLeft, mods.lalt_state()),
                         (KeyCode::AltRight, mods.ralt_state()),
                     ],
+                    Key::Alt,
+                    state.alt_key(),
                 ),
                 (
-                    state.shift_key(),
-                    Key::Shift,
                     [
                         (KeyCode::ShiftLeft, mods.lshift_state()),
                         (KeyCode::ShiftRight, mods.rshift_state()),
                     ],
+                    Key::Shift,
+                    state.shift_key(),
                 ),
             ] {
-                let held: Vec<KeyCode> = sides
+                let any_group_keycode_pressed = key_codes
                     .iter()
-                    .map(|(key_code, _)| *key_code)
-                    .filter(|key_code| pressed_keys.0.contains_key(key_code))
-                    .collect();
+                    .any(|(_, state)| state == &ModifiersKeyState::Pressed);
 
-                if reported && held.is_empty() {
-                    // pick the side winit reports as pressed where the
-                    // platform knows it, defaulting to left (the web backend
-                    // can't distinguish sides)
-                    let key_code = sides
-                        .iter()
-                        .find(|(_, side)| *side == ModifiersKeyState::Pressed)
-                        .map(|(key_code, _)| *key_code)
-                        .unwrap_or(sides[0].0);
-                    pressed_keys.0.insert(key_code, logical_key.clone());
-                    synthesized.push(KeyboardInput {
-                        key_code,
-                        logical_key,
-                        state: bevy_input::ButtonState::Pressed,
-                        repeat: false,
-                        window,
-                        text: None,
-                    });
-                } else if !reported {
-                    for key_code in held {
+                for (key_code, state) in key_codes {
+                    let recorded = pressed_keys.0.contains_key(&key_code);
+
+                    // we can only be sure a key has been released if either all group keys
+                    // are released, or the platform provably supports known modifier states
+                    // (only macOS attests them; web, linux and windows currently always
+                    // report `ModifiersKeyState::Unknown`)
+                    let known_released = !group_pressed
+                        || (state == ModifiersKeyState::Unknown && any_group_keycode_pressed);
+
+                    if state == ModifiersKeyState::Pressed && !recorded {
+                        // if this keycode is attested down but we never saw its keydown
+                        // (e.g. it was already held when focus was gained): reapply it.
+                        // if the platform cannot attest modifier state this is unreachable.
+                        pressed_keys.0.insert(key_code, logical_key.clone());
+                        synthesized.push(KeyboardInput {
+                            key_code,
+                            logical_key: logical_key.clone(),
+                            state: bevy_input::ButtonState::Pressed,
+                            repeat: false,
+                            window,
+                            text: None,
+                        });
+                    } else if recorded && known_released {
+                        // this side is provably up but we never saw its keyup
+                        // (e.g. the OS consumed it as part of a shortcut chord):
+                        // release the recorded key.
                         let Some(logical_key) = pressed_keys.0.remove(&key_code) else {
                             continue;
                         };
