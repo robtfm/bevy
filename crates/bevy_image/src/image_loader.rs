@@ -169,8 +169,18 @@ impl AssetLoader for ImageLoader {
             path: format!("{}", load_context.path().display()),
         })?;
 
-        #[cfg(target_arch = "wasm32")]
-        let image = if image.texture_descriptor.format == wgpu_types::TextureFormat::Rgba16Unorm {
+        // wgpu on web can't sample Rgba16Unorm, so wasm downconverts every 16-bit
+        // texture to 8-bit. Native keeps 16-bit for precision EXCEPT sRGB (colour)
+        // textures: there is no Rgba16UnormSrgb format, so a 16-bit sRGB texture
+        // would otherwise sit in a linear format and render too bright.
+        let convert_16bit = image.texture_descriptor.format
+            == wgpu_types::TextureFormat::Rgba16Unorm
+            && (cfg!(target_arch = "wasm32") || settings.is_srgb);
+        let image = if convert_16bit {
+            // Image::new resets sampler/view-descriptor to defaults; preserve them
+            // across the 16->8 bit rebuild.
+            let sampler = image.sampler.clone();
+            let texture_view_descriptor = image.texture_view_descriptor.clone();
             let data = image
                 .data
                 .unwrap()
@@ -180,13 +190,24 @@ impl AssetLoader for ImageLoader {
                         * u8::MAX as f32) as u8
                 })
                 .collect::<Vec<_>>();
-            Image::new(
+            // Mirror `from_dynamic`: sRGB textures keep their sRGB-encoded data in
+            // an *Srgb format (the GPU decodes on sample). Hardcoding Rgba8Unorm
+            // would leave sRGB data in a linear format -> washed-out colors.
+            let format = if settings.is_srgb {
+                wgpu_types::TextureFormat::Rgba8UnormSrgb
+            } else {
+                wgpu_types::TextureFormat::Rgba8Unorm
+            };
+            let mut image = Image::new(
                 image.texture_descriptor.size,
                 image.texture_descriptor.dimension,
                 data,
-                wgpu_types::TextureFormat::Rgba8Unorm,
+                format,
                 image.asset_usage,
-            )
+            );
+            image.sampler = sampler;
+            image.texture_view_descriptor = texture_view_descriptor;
+            image
         } else {
             image
         };

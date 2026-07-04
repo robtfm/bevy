@@ -987,10 +987,18 @@ fn load_image<'a, 'b>(
                 render_asset_usages,
             )?;
 
-            #[cfg(target_arch = "wasm32")]
-            let image = if image.texture_descriptor.format
+            // wasm can't sample Rgba16Unorm; native keeps 16-bit except for sRGB
+            // (colour) textures, which have no 16-bit sRGB format and would
+            // otherwise render too bright in a linear format.
+            let convert_16bit = image.texture_descriptor.format
                 == bevy_render::render_resource::TextureFormat::Rgba16Unorm
-            {
+                && (cfg!(target_arch = "wasm32") || is_srgb);
+            let image = if convert_16bit {
+                // preserve sampler/view-descriptor and honor sRGB — Image::new
+                // otherwise resets them, dropping the glTF wrap mode and leaving
+                // sRGB data in a linear format (washed-out colors) on wasm.
+                let sampler = image.sampler.clone();
+                let texture_view_descriptor = image.texture_view_descriptor.clone();
                 let data = image
                     .data
                     .unwrap()
@@ -1000,13 +1008,21 @@ fn load_image<'a, 'b>(
                             * u8::MAX as f32) as u8
                     })
                     .collect::<Vec<_>>();
-                Image::new(
+                let format = if is_srgb {
+                    bevy_render::render_resource::TextureFormat::Rgba8UnormSrgb
+                } else {
+                    bevy_render::render_resource::TextureFormat::Rgba8Unorm
+                };
+                let mut image = Image::new(
                     image.texture_descriptor.size,
                     image.texture_descriptor.dimension,
                     data,
-                    bevy_render::render_resource::TextureFormat::Rgba8Unorm,
+                    format,
                     image.asset_usage,
-                )
+                );
+                image.sampler = sampler;
+                image.texture_view_descriptor = texture_view_descriptor;
+                image
             } else {
                 image
             };
@@ -1086,10 +1102,17 @@ fn load_image<'a, 'b>(
                     render_asset_usages,
                 )?;
 
-                #[cfg(target_arch = "wasm32")]
-                let image = if image.texture_descriptor.format
+                // wasm can't sample Rgba16Unorm; native keeps 16-bit except for
+                // sRGB (colour) textures, which have no 16-bit sRGB format and
+                // would otherwise render too bright in a linear format.
+                let convert_16bit = image.texture_descriptor.format
                     == bevy_render::render_resource::TextureFormat::Rgba16Unorm
-                {
+                    && (cfg!(target_arch = "wasm32") || is_srgb);
+                let image = if convert_16bit {
+                    // preserve sampler/view-descriptor that Image::new would reset
+                    // (else the glTF wrap mode is lost on 16-bit textures on wasm)
+                    let sampler = image.sampler.clone();
+                    let texture_view_descriptor = image.texture_view_descriptor.clone();
                     let data = image
                         .data
                         .unwrap()
@@ -1099,13 +1122,23 @@ fn load_image<'a, 'b>(
                                 * u8::MAX as f32) as u8
                         })
                         .collect::<Vec<_>>();
-                    Image::new(
+                    // sRGB textures need an *Srgb format so the GPU decodes on
+                    // sample; hardcoding Unorm leaves sRGB data linear (washed out).
+                    let format = if is_srgb {
+                        bevy_render::render_resource::TextureFormat::Rgba8UnormSrgb
+                    } else {
+                        bevy_render::render_resource::TextureFormat::Rgba8Unorm
+                    };
+                    let mut image = Image::new(
                         image.texture_descriptor.size,
                         image.texture_descriptor.dimension,
                         data,
-                        bevy_render::render_resource::TextureFormat::Rgba8Unorm,
+                        format,
                         image.asset_usage,
-                    )
+                    );
+                    image.sampler = sampler;
+                    image.texture_view_descriptor = texture_view_descriptor;
+                    image
                 } else {
                     image
                 };
