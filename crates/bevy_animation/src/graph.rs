@@ -877,7 +877,9 @@ fn thread_animation_graph(
     threaded_animation_graph.build_from(&animation_graph.graph, animation_graph.root, 0);
 
     // Write in the threaded graph.
-    threaded_animation_graphs.0.insert(id, threaded_animation_graph);
+    threaded_animation_graphs
+        .0
+        .insert(id, threaded_animation_graph);
 }
 
 impl ThreadedAnimationGraph {

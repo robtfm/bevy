@@ -35,11 +35,13 @@ use bevy_app::{Animation, App, Plugin, PostUpdate};
 use bevy_asset::{Asset, AssetApp, AssetEvents, Assets};
 use bevy_ecs::{prelude::*, world::EntityMutExcept};
 use bevy_math::FloatOrd;
-use bevy_platform::{collections::HashMap, hash::NoOpHash};
+use bevy_platform::{
+    collections::HashMap,
+    hash::{Hashed, NoOpHash},
+};
 use bevy_reflect::{prelude::ReflectDefault, Reflect, TypePath};
 use bevy_time::Time;
 use bevy_transform::TransformSystem;
-use bevy_utils::{PreHashMap, PreHashMapExt, TypeIdMap};
 use petgraph::graph::NodeIndex;
 use serde::{Deserialize, Serialize};
 use thread_local::ThreadLocal;
@@ -728,85 +730,75 @@ pub struct AnimationEvaluationState {
     current_evaluators: CurrentEvaluators,
 }
 
+// PERF (dcl fork): these were `PreHashMap<(TypeId, usize), _>` + `TypeIdMap<_>`,
+// probed per curve per target per frame. The distinct-evaluator count is bounded by
+// the number of animatable properties (translation/rotation/scale/weights in
+// glTF-driven content), not by scene size, so linear scans over a dense `Vec` beat
+// hashing, and `CurrentEvaluators` can hold plain indices into it. Capacity is
+// retained in the thread-local state across frames.
 #[derive(Default)]
 struct AnimationCurveEvaluators {
-    component_property_curve_evaluators:
-        PreHashMap<(TypeId, usize), Box<dyn AnimationCurveEvaluator>>,
-    type_id_curve_evaluators: TypeIdMap<Box<dyn AnimationCurveEvaluator>>,
+    entries: Vec<(EvaluatorKey, Box<dyn AnimationCurveEvaluator>)>,
+}
+
+/// An owned version of [`EvaluatorId`], used as the key for the dense evaluator list.
+enum EvaluatorKey {
+    ComponentField(Hashed<(TypeId, usize)>),
+    Type(TypeId),
+}
+
+impl EvaluatorKey {
+    #[inline]
+    fn matches(&self, id: &EvaluatorId) -> bool {
+        match (self, id) {
+            (EvaluatorKey::ComponentField(key), EvaluatorId::ComponentField(id)) => key == *id,
+            (EvaluatorKey::Type(key), EvaluatorId::Type(id)) => key == id,
+            _ => false,
+        }
+    }
+
+    fn from_id(id: &EvaluatorId) -> Self {
+        match id {
+            EvaluatorId::ComponentField(component_property) => {
+                EvaluatorKey::ComponentField((*component_property).clone())
+            }
+            EvaluatorId::Type(type_id) => EvaluatorKey::Type(*type_id),
+        }
+    }
 }
 
 impl AnimationCurveEvaluators {
-    #[inline]
-    pub(crate) fn get_mut(&mut self, id: EvaluatorId) -> Option<&mut dyn AnimationCurveEvaluator> {
-        match id {
-            EvaluatorId::ComponentField(component_property) => self
-                .component_property_curve_evaluators
-                .get_mut(component_property),
-            EvaluatorId::Type(type_id) => self.type_id_curve_evaluators.get_mut(&type_id),
-        }
-        .map(|e| &mut **e)
-    }
-
+    /// Returns the dense index of the evaluator for the given id, creating it if
+    /// necessary, along with the evaluator itself.
     #[inline]
     pub(crate) fn get_or_insert_with(
         &mut self,
         id: EvaluatorId,
         func: impl FnOnce() -> Box<dyn AnimationCurveEvaluator>,
-    ) -> &mut dyn AnimationCurveEvaluator {
-        match id {
-            EvaluatorId::ComponentField(component_property) => &mut **self
-                .component_property_curve_evaluators
-                .get_or_insert_with(component_property, func),
-            EvaluatorId::Type(type_id) => match self.type_id_curve_evaluators.entry(type_id) {
-                bevy_platform::collections::hash_map::Entry::Occupied(occupied_entry) => {
-                    &mut **occupied_entry.into_mut()
-                }
-                bevy_platform::collections::hash_map::Entry::Vacant(vacant_entry) => {
-                    &mut **vacant_entry.insert(func())
-                }
-            },
-        }
+    ) -> (u32, &mut dyn AnimationCurveEvaluator) {
+        let index = match self.entries.iter().position(|(key, _)| key.matches(&id)) {
+            Some(index) => index,
+            None => {
+                self.entries.push((EvaluatorKey::from_id(&id), func()));
+                self.entries.len() - 1
+            }
+        };
+        (index as u32, &mut *self.entries[index].1)
     }
 }
 
 #[derive(Default)]
 struct CurrentEvaluators {
-    component_properties: PreHashMap<(TypeId, usize), ()>,
-    type_ids: TypeIdMap<()>,
+    /// Indices into [`AnimationCurveEvaluators::entries`] of the evaluators in
+    /// use for the current animation target.
+    indices: Vec<u32>,
 }
 
 impl CurrentEvaluators {
-    pub(crate) fn keys(&self) -> impl Iterator<Item = EvaluatorId> {
-        self.component_properties
-            .keys()
-            .map(EvaluatorId::ComponentField)
-            .chain(self.type_ids.keys().copied().map(EvaluatorId::Type))
-    }
-
-    pub(crate) fn clear(
-        &mut self,
-        mut visit: impl FnMut(EvaluatorId) -> Result<(), AnimationEvaluationError>,
-    ) -> Result<(), AnimationEvaluationError> {
-        for (key, _) in self.component_properties.drain() {
-            (visit)(EvaluatorId::ComponentField(&key))?;
-        }
-
-        for (key, _) in self.type_ids.drain() {
-            (visit)(EvaluatorId::Type(key))?;
-        }
-
-        Ok(())
-    }
-
     #[inline]
-    pub(crate) fn insert(&mut self, id: EvaluatorId) {
-        match id {
-            EvaluatorId::ComponentField(component_property) => {
-                self.component_properties.insert(*component_property, ());
-            }
-            EvaluatorId::Type(type_id) => {
-                self.type_ids.insert(type_id, ());
-            }
+    pub(crate) fn insert(&mut self, index: u32) {
+        if !self.indices.contains(&index) {
+            self.indices.push(index);
         }
     }
 }
@@ -1196,15 +1188,13 @@ pub fn animate_targets(
                             // therefore will share the same evaluator in this
                             // table.
                             let curve_evaluator_id = (*curve.0).evaluator_id();
-                            let curve_evaluator = evaluation_state
+                            let (evaluator_index, curve_evaluator) = evaluation_state
                                 .evaluators
-                                .get_or_insert_with(curve_evaluator_id.clone(), || {
+                                .get_or_insert_with(curve_evaluator_id, || {
                                     curve.0.create_evaluator()
                                 });
 
-                            evaluation_state
-                                .current_evaluators
-                                .insert(curve_evaluator_id);
+                            evaluation_state.current_evaluators.insert(evaluator_index);
 
                             if let Err(err) = AnimationCurve::apply(
                                 &*curve.0,
@@ -1321,10 +1311,9 @@ impl AnimationEvaluationState {
         &mut self,
         node_index: AnimationNodeIndex,
     ) -> Result<(), AnimationEvaluationError> {
-        for curve_evaluator_type in self.current_evaluators.keys() {
-            self.evaluators
-                .get_mut(curve_evaluator_type)
-                .unwrap()
+        for &index in &self.current_evaluators.indices {
+            self.evaluators.entries[index as usize]
+                .1
                 .blend(node_index)?;
         }
         Ok(())
@@ -1335,11 +1324,8 @@ impl AnimationEvaluationState {
     ///
     /// The given `node_index` is the node that we're evaluating.
     fn add_all(&mut self, node_index: AnimationNodeIndex) -> Result<(), AnimationEvaluationError> {
-        for curve_evaluator_type in self.current_evaluators.keys() {
-            self.evaluators
-                .get_mut(curve_evaluator_type)
-                .unwrap()
-                .add(node_index)?;
+        for &index in &self.current_evaluators.indices {
+            self.evaluators.entries[index as usize].1.add(node_index)?;
         }
         Ok(())
     }
@@ -1355,10 +1341,9 @@ impl AnimationEvaluationState {
         weight: f32,
         node_index: AnimationNodeIndex,
     ) -> Result<(), AnimationEvaluationError> {
-        for curve_evaluator_type in self.current_evaluators.keys() {
-            self.evaluators
-                .get_mut(curve_evaluator_type)
-                .unwrap()
+        for &index in &self.current_evaluators.indices {
+            self.evaluators.entries[index as usize]
+                .1
                 .push_blend_register(weight, node_index)?;
         }
         Ok(())
@@ -1373,12 +1358,12 @@ impl AnimationEvaluationState {
         &mut self,
         mut entity_mut: AnimationEntityMut,
     ) -> Result<(), AnimationEvaluationError> {
-        self.current_evaluators.clear(|id| {
-            self.evaluators
-                .get_mut(id)
-                .unwrap()
-                .commit(entity_mut.reborrow())
-        })
+        for index in self.current_evaluators.indices.drain(..) {
+            self.evaluators.entries[index as usize]
+                .1
+                .commit(entity_mut.reborrow())?;
+        }
+        Ok(())
     }
 }
 
