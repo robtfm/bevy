@@ -159,7 +159,13 @@ pub struct VisibilityClass(pub SmallVec<[TypeId; 1]>);
 ///
 /// Each frame, this will be reset to `false` during [`VisibilityPropagate`] systems in [`PostUpdate`].
 /// Later in the frame, systems in [`CheckVisibility`] will mark any visible entities using [`ViewVisibility::set`].
-/// Because of this, values of this type will be marked as changed every frame, even when they do not change.
+///
+/// The visibility from the previous frame is also tracked here, as scratch space. This is needed
+/// because an entity might be seen by many views (cameras, lights that cast shadows, etc.), so it
+/// is easy to know if an entity is visible to something, but hard to know if it is *globally*
+/// non-visible to any view. By comparing against the previous frame's visibility at the end of
+/// visibility determination, `mark_newly_hidden_entities_invisible` can hide entities that no view
+/// marked as visible, and change detection is only triggered when visibility actually changes.
 ///
 /// If you wish to add custom visibility system that sets this value, make sure you add it to the [`CheckVisibility`] set.
 ///
@@ -167,17 +173,31 @@ pub struct VisibilityClass(pub SmallVec<[TypeId; 1]>);
 /// [`CheckVisibility`]: VisibilitySystems::CheckVisibility
 #[derive(Component, Deref, Debug, Default, Clone, Copy, Reflect, PartialEq, Eq)]
 #[reflect(Component, Default, Debug, PartialEq, Clone)]
-pub struct ViewVisibility(bool);
+pub struct ViewVisibility(#[deref] bool, bool);
 
 impl ViewVisibility {
     /// An entity that cannot be seen from any views.
-    pub const HIDDEN: Self = Self(false);
+    pub const HIDDEN: Self = Self(false, false);
 
     /// Returns `true` if the entity is visible in any view.
     /// Otherwise, returns `false`.
     #[inline]
     pub fn get(self) -> bool {
         self.0
+    }
+
+    /// Returns `true` if this entity was visible in the previous frame but is now hidden.
+    #[inline]
+    fn was_visible_now_hidden(self) -> bool {
+        !self.0 && self.1
+    }
+
+    /// Records the current visibility as the "previous frame" visibility and resets the
+    /// current visibility, ready for this frame's visibility determination.
+    #[inline]
+    fn update(&mut self) {
+        self.1 = self.0;
+        self.0 = false;
     }
 
     /// Sets the visibility to `true`. This should not be considered reversible for a given frame,
@@ -190,11 +210,49 @@ impl ViewVisibility {
     /// in which case the system should be placed in the [`CheckVisibility`] set.
     /// For normal user-defined entity visibility, see [`Visibility`].
     ///
+    /// Note that calling this through a `Mut<ViewVisibility>` triggers change detection even if
+    /// the entity was already visible in the previous frame. Custom visibility systems should
+    /// prefer [`SetViewVisibility::set_visible`], which avoids spurious change detection.
+    ///
     /// [`VisibilityPropagate`]: VisibilitySystems::VisibilityPropagate
     /// [`CheckVisibility`]: VisibilitySystems::CheckVisibility
     #[inline]
     pub fn set(&mut self) {
         self.0 = true;
+    }
+}
+
+/// An extension trait for `Mut<ViewVisibility>` used by visibility-determining systems to mark
+/// entities as visible.
+pub trait SetViewVisibility {
+    /// Sets the visibility to `true` if not already visible, triggering change detection only
+    /// when needed. This should not be considered reversible for a given frame, as this component
+    /// tracks whether or not the entity is visible in _any_ view.
+    ///
+    /// You should only manually set this if you are defining a custom visibility system,
+    /// in which case the system should be placed in the [`CheckVisibility`] set.
+    /// For normal user-defined entity visibility, see [`Visibility`].
+    ///
+    /// [`CheckVisibility`]: VisibilitySystems::CheckVisibility
+    fn set_visible(&mut self);
+}
+
+impl SetViewVisibility for Mut<'_, ViewVisibility> {
+    #[inline]
+    fn set_visible(&mut self) {
+        // Only update if it's not already visible.
+        // This is important because `set_visible` may be called multiple times per frame.
+        if !self.as_ref().0 {
+            if self.as_ref().1 {
+                // If it was already visible last frame, we don't want to trigger change detection
+                // because it's still visible this frame.
+                self.bypass_change_detection().0 = true;
+            } else {
+                // If it was NOT visible last frame, this is a transition from hidden to visible.
+                // We want to trigger change detection here.
+                self.0 = true;
+            }
+        }
     }
 }
 
@@ -466,26 +524,23 @@ fn propagate_recursive(
 
 /// Stores all entities that were visible in the previous frame.
 ///
-/// As systems that check visibility judge entities visible, they remove them
-/// from this set. Afterward, the `mark_newly_hidden_entities_invisible` system
-/// runs and marks every mesh still remaining in this set as hidden.
+/// This is no longer used by the built-in visibility systems: the previous
+/// frame's visibility is now tracked directly on each entity's
+/// [`ViewVisibility`] component, which avoids per-frame hashing. The resource
+/// is kept (always empty) so that external visibility-determining systems that
+/// remove entities from it continue to compile and behave correctly; such
+/// systems should mark entities visible via [`SetViewVisibility::set_visible`].
 #[derive(Resource, Default, Deref, DerefMut)]
 pub struct PreviousVisibleEntities(EntityHashSet);
 
 /// Resets the view visibility of every entity.
 /// Entities that are visible will be marked as such later this frame
 /// by a [`VisibilitySystems::CheckVisibility`] system.
-fn reset_view_visibility(
-    mut query: Query<(Entity, &ViewVisibility)>,
-    mut previous_visible_entities: ResMut<PreviousVisibleEntities>,
-) {
-    previous_visible_entities.clear();
-
-    query.iter_mut().for_each(|(entity, view_visibility)| {
-        // Record the entities that were previously visible.
-        if view_visibility.get() {
-            previous_visible_entities.insert(entity);
-        }
+fn reset_view_visibility(mut query: Query<&mut ViewVisibility>) {
+    query.par_iter_mut().for_each(|mut view_visibility| {
+        // Record the visibility from the previous frame and reset the current
+        // visibility, without triggering change detection.
+        view_visibility.bypass_change_detection().update();
     });
 }
 
@@ -519,7 +574,6 @@ pub fn check_visibility(
         Has<VisibilityRange>,
     )>,
     visible_entity_ranges: Option<Res<VisibleEntityRanges>>,
-    mut previous_visible_entities: ResMut<PreviousVisibleEntities>,
 ) {
     let visible_entity_ranges = visible_entity_ranges.as_deref();
 
@@ -587,11 +641,9 @@ pub fn check_visibility(
                 }
 
                 // Make sure we don't trigger changed notifications
-                // unnecessarily by checking whether the flag is set before
-                // setting it.
-                if !**view_visibility {
-                    view_visibility.set();
-                }
+                // unnecessarily by only triggering change detection when the
+                // entity was not visible in the previous frame.
+                view_visibility.set_visible();
 
                 // Add the entity to the queue for all visibility classes the
                 // entity is in.
@@ -606,17 +658,7 @@ pub fn check_visibility(
         // Drain all the thread queues into the `visible_entities` list.
         for class_queues in thread_queues.iter_mut() {
             for (class, entities) in class_queues {
-                let visible_entities_for_class = visible_entities.get_mut(*class);
-                for entity in entities.drain(..) {
-                    // As we mark entities as visible, we remove them from the
-                    // `previous_visible_entities` list. At the end, all of the
-                    // entities remaining in `previous_visible_entities` will be
-                    // entities that were visible last frame but are no longer
-                    // visible this frame.
-                    previous_visible_entities.remove(&entity);
-
-                    visible_entities_for_class.push(entity);
-                }
+                visible_entities.get_mut(*class).append(entities);
             }
         }
     }
@@ -624,22 +666,20 @@ pub fn check_visibility(
 
 /// Marks any entities that weren't judged visible this frame as invisible.
 ///
-/// As visibility-determining systems run, they remove entities that they judge
-/// visible from [`PreviousVisibleEntities`]. At the end of visibility
-/// determination, all entities that remain in [`PreviousVisibleEntities`] must
-/// be invisible. This system goes through those entities and marks them newly
-/// invisible (which sets the change flag for them).
-fn mark_newly_hidden_entities_invisible(
-    mut view_visibilities: Query<&mut ViewVisibility>,
-    mut previous_visible_entities: ResMut<PreviousVisibleEntities>,
-) {
-    // Whatever previous visible entities are left are entities that were
-    // visible last frame but just became invisible.
-    for entity in previous_visible_entities.drain() {
-        if let Ok(mut view_visibility) = view_visibilities.get_mut(entity) {
-            *view_visibility = ViewVisibility::HIDDEN;
-        }
-    }
+/// As visibility-determining systems run, they mark the entities that they
+/// judge visible on the entities' [`ViewVisibility`] components. At the end of
+/// visibility determination, any entity that was visible in the previous frame
+/// but was not marked visible this frame must be invisible. This system goes
+/// through those entities and marks them newly invisible (which sets the
+/// change flag for them).
+fn mark_newly_hidden_entities_invisible(mut view_visibilities: Query<&mut ViewVisibility>) {
+    view_visibilities
+        .par_iter_mut()
+        .for_each(|mut view_visibility| {
+            if view_visibility.as_ref().was_visible_now_hidden() {
+                *view_visibility = ViewVisibility::HIDDEN;
+            }
+        });
 }
 
 /// A generic component add hook that automatically adds the appropriate
