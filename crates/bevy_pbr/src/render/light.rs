@@ -1815,9 +1815,9 @@ pub fn specialize_shadows<M: Material>(
         material_bind_group_allocator,
     ): (
         Res<RenderAssets<RenderMesh>>,
-        Res<RenderMeshInstances>,
+        MeshInstanceLookup,
         Res<RenderAssets<PreparedMaterial<M>>>,
-        Res<RenderMaterialInstances>,
+        MaterialInstanceLookup,
         Res<MaterialBindGroupAllocator<M>>,
     ),
     shadow_render_phases: Res<ViewBinnedRenderPhases<Shadow>>,
@@ -1896,9 +1896,9 @@ pub fn specialize_shadows<M: Material>(
                 .entry(extracted_view_light.retained_view_entity)
                 .or_default();
 
-            for (_, visible_entity) in visible_entities.iter().copied() {
+            for (render_entity, visible_entity) in visible_entities.iter().copied() {
                 let Some(material_instances) =
-                    render_material_instances.instances.get(&visible_entity)
+                    render_material_instances.instance(render_entity, visible_entity)
                 else {
                     continue;
                 };
@@ -1906,7 +1906,7 @@ pub fn specialize_shadows<M: Material>(
                     continue;
                 };
                 let Some(mesh_instance) =
-                    render_mesh_instances.render_mesh_queue_data(visible_entity)
+                    render_mesh_instances.render_mesh_queue_data(render_entity, visible_entity)
                 else {
                     continue;
                 };
@@ -1997,9 +1997,9 @@ pub fn specialize_shadows<M: Material>(
 /// appropriate.
 pub fn queue_shadows<M: Material>(
     shadow_draw_functions: Res<DrawFunctions<Shadow>>,
-    render_mesh_instances: Res<RenderMeshInstances>,
+    render_mesh_instances: MeshInstanceLookup,
     render_materials: Res<RenderAssets<PreparedMaterial<M>>>,
-    render_material_instances: Res<RenderMaterialInstances>,
+    render_material_instances: MaterialInstanceLookup,
     mut shadow_render_phases: ResMut<ViewBinnedRenderPhases<Shadow>>,
     gpu_preprocessing_support: Res<GpuPreprocessingSupport>,
     mesh_allocator: Res<MeshAllocator>,
@@ -2071,7 +2071,8 @@ pub fn queue_shadows<M: Material>(
                     continue;
                 }
 
-                let Some(mesh_instance) = render_mesh_instances.render_mesh_queue_data(main_entity)
+                let Some(mesh_instance) =
+                    render_mesh_instances.render_mesh_queue_data(entity, main_entity)
                 else {
                     continue;
                 };
@@ -2082,7 +2083,8 @@ pub fn queue_shadows<M: Material>(
                     continue;
                 }
 
-                let Some(material_instance) = render_material_instances.instances.get(&main_entity)
+                let Some(material_instance) =
+                    render_material_instances.instance(entity, main_entity)
                 else {
                     continue;
                 };

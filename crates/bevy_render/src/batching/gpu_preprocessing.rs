@@ -1373,7 +1373,7 @@ pub fn batch_and_prepare_sorted_render_phase<I, GFBD>(
             // Get the index of the input data, and comparison metadata, for
             // this entity.
             let item = &phase.items[current_index];
-            let entity = item.main_entity();
+            let entity = (item.entity(), item.main_entity());
             let item_is_indexed = item.indexed();
             let current_batch_input_index =
                 GFBD::get_index_and_compare_data(&system_param_item, entity);
@@ -1613,7 +1613,8 @@ pub fn batch_and_prepare_binned_render_phase<BPI, GFBD>(
 
         for (key, bin) in &phase.batchable_meshes {
             let mut batch: Option<BinnedRenderPhaseBatch> = None;
-            for (&main_entity, &input_index) in bin.entities() {
+            for (&main_entity, bin_entry) in bin.entities() {
+                let input_index = bin_entry.uniform_index;
                 let output_index = data_buffer.add() as u32;
 
                 match batch {
@@ -1674,7 +1675,7 @@ pub fn batch_and_prepare_binned_render_phase<BPI, GFBD>(
                             },
                         );
                         batch = Some(BinnedRenderPhaseBatch {
-                            representative_entity: (Entity::PLACEHOLDER, main_entity),
+                            representative_entity: (bin_entry.render_entity, main_entity),
                             instance_range: output_index..output_index + 1,
                             extra_index: PhaseItemExtraIndex::IndirectParametersIndex {
                                 range: indirect_parameters_index..(indirect_parameters_index + 1),
@@ -1693,7 +1694,7 @@ pub fn batch_and_prepare_binned_render_phase<BPI, GFBD>(
                             },
                         );
                         batch = Some(BinnedRenderPhaseBatch {
-                            representative_entity: (Entity::PLACEHOLDER, main_entity),
+                            representative_entity: (bin_entry.render_entity, main_entity),
                             instance_range: output_index..output_index + 1,
                             extra_index: PhaseItemExtraIndex::None,
                         });
@@ -1749,8 +1750,9 @@ pub fn batch_and_prepare_binned_render_phase<BPI, GFBD>(
                 )
             };
 
-            for main_entity in unbatchables.entities.keys() {
-                let Some(input_index) = GFBD::get_binned_index(&system_param_item, *main_entity)
+            for (main_entity, render_entity) in unbatchables.entities.iter() {
+                let Some(input_index) =
+                    GFBD::get_binned_index(&system_param_item, (*render_entity, *main_entity))
                 else {
                     continue;
                 };
@@ -1870,12 +1872,12 @@ where
             return;
         };
         let first_bin_len = first_bin.entities().len();
-        let first_bin_entity = first_bin
+        let (first_bin_entity, first_bin_render_entity) = first_bin
             .entities()
-            .keys()
+            .iter()
             .next()
-            .copied()
-            .unwrap_or(MainEntity::from(Entity::PLACEHOLDER));
+            .map(|(&main_entity, bin_entry)| (main_entity, bin_entry.render_entity))
+            .unwrap_or((MainEntity::from(Entity::PLACEHOLDER), Entity::PLACEHOLDER));
 
         // Traverse the batch set, processing each bin.
         for bin in bins.values() {
@@ -1890,9 +1892,9 @@ where
 
             // Traverse the bin, pushing `PreprocessWorkItem`s for each entity
             // within it. This is a hot loop, so make it as fast as possible.
-            for &input_index in bin.entities().values() {
+            for bin_entry in bin.entities().values() {
                 indexed_work_item_buffer.push(PreprocessWorkItem {
-                    input_index: *input_index,
+                    input_index: *bin_entry.uniform_index,
                     output_or_indirect_parameters_index: self.indirect_parameters_index,
                 });
             }
@@ -1924,7 +1926,7 @@ where
         // render the batches.
         batch_sets.push(BinnedRenderPhaseBatchSet {
             first_batch: BinnedRenderPhaseBatch {
-                representative_entity: (Entity::PLACEHOLDER, first_bin_entity),
+                representative_entity: (first_bin_render_entity, first_bin_entity),
                 instance_range: current_output_index..(current_output_index + first_bin_len as u32),
                 extra_index: PhaseItemExtraIndex::maybe_indirect_parameters_index(NonMaxU32::new(
                     indirect_parameters_base,

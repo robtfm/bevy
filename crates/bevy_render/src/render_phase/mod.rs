@@ -176,8 +176,21 @@ where
 #[derive(Default)]
 pub struct RenderBin {
     /// A list of the entities in each bin, along with their cached
-    /// [`InputUniformIndex`].
-    entities: IndexMap<MainEntity, InputUniformIndex, EntityHash>,
+    /// [`InputUniformIndex`] and render world entity.
+    entities: IndexMap<MainEntity, BinEntry, EntityHash>,
+}
+
+/// The value stored for each entity within a [`RenderBin`].
+///
+/// This records both the render world entity and its cached
+/// [`InputUniformIndex`], so that batching can recover a real representative
+/// render entity instead of [`Entity::PLACEHOLDER`].
+#[derive(Clone, Copy)]
+pub struct BinEntry {
+    /// The render world entity.
+    pub render_entity: Entity,
+    /// The cached [`InputUniformIndex`] of the entity.
+    pub uniform_index: InputUniformIndex,
 }
 
 /// Information that we track about an entity that was in one bin on the
@@ -485,17 +498,17 @@ where
             BinnedRenderPhaseType::MultidrawableMesh => {
                 match self.multidrawable_meshes.entry(batch_set_key.clone()) {
                     indexmap::map::Entry::Occupied(mut entry) => {
-                        entry
-                            .get_mut()
-                            .entry(bin_key.clone())
-                            .or_default()
-                            .insert(main_entity, input_uniform_index);
+                        entry.get_mut().entry(bin_key.clone()).or_default().insert(
+                            main_entity,
+                            entity,
+                            input_uniform_index,
+                        );
                     }
                     indexmap::map::Entry::Vacant(entry) => {
                         let mut new_batch_set = IndexMap::default();
                         new_batch_set.insert(
                             bin_key.clone(),
-                            RenderBin::from_entity(main_entity, input_uniform_index),
+                            RenderBin::from_entity(main_entity, entity, input_uniform_index),
                         );
                         entry.insert(new_batch_set);
                     }
@@ -508,10 +521,16 @@ where
                     .entry((batch_set_key.clone(), bin_key.clone()).clone())
                 {
                     indexmap::map::Entry::Occupied(mut entry) => {
-                        entry.get_mut().insert(main_entity, input_uniform_index);
+                        entry
+                            .get_mut()
+                            .insert(main_entity, entity, input_uniform_index);
                     }
                     indexmap::map::Entry::Vacant(entry) => {
-                        entry.insert(RenderBin::from_entity(main_entity, input_uniform_index));
+                        entry.insert(RenderBin::from_entity(
+                            main_entity,
+                            entity,
+                            input_uniform_index,
+                        ));
                     }
                 }
             }
@@ -1756,15 +1775,36 @@ impl BinnedRenderPhaseType {
 
 impl RenderBin {
     /// Creates a [`RenderBin`] containing a single entity.
-    fn from_entity(entity: MainEntity, uniform_index: InputUniformIndex) -> RenderBin {
+    fn from_entity(
+        entity: MainEntity,
+        render_entity: Entity,
+        uniform_index: InputUniformIndex,
+    ) -> RenderBin {
         let mut entities = IndexMap::default();
-        entities.insert(entity, uniform_index);
+        entities.insert(
+            entity,
+            BinEntry {
+                render_entity,
+                uniform_index,
+            },
+        );
         RenderBin { entities }
     }
 
     /// Inserts an entity into the bin.
-    fn insert(&mut self, entity: MainEntity, uniform_index: InputUniformIndex) {
-        self.entities.insert(entity, uniform_index);
+    fn insert(
+        &mut self,
+        entity: MainEntity,
+        render_entity: Entity,
+        uniform_index: InputUniformIndex,
+    ) {
+        self.entities.insert(
+            entity,
+            BinEntry {
+                render_entity,
+                uniform_index,
+            },
+        );
     }
 
     /// Removes an entity from the bin.
@@ -1778,9 +1818,9 @@ impl RenderBin {
     }
 
     /// Returns the [`IndexMap`] containing all the entities in the bin, along
-    /// with the cached [`InputUniformIndex`] of each.
+    /// with the cached [`InputUniformIndex`] and render world entity of each.
     #[inline]
-    pub fn entities(&self) -> &IndexMap<MainEntity, InputUniformIndex, EntityHash> {
+    pub fn entities(&self) -> &IndexMap<MainEntity, BinEntry, EntityHash> {
         &self.entities
     }
 }

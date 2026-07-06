@@ -387,7 +387,7 @@ impl GetFullBatchData for StencilPipeline {
 
     fn get_index_and_compare_data(
         (mesh_instances, _, _): &SystemParamItem<Self::Param>,
-        main_entity: MainEntity,
+        (_entity, main_entity): (Entity, MainEntity),
     ) -> Option<(NonMaxU32, Option<Self::CompareData>)> {
         // This should only be called during GPU building.
         let RenderMeshInstances::GpuBuilding(ref mesh_instances) = **mesh_instances else {
@@ -464,7 +464,7 @@ impl GetFullBatchData for StencilPipeline {
 
     fn get_binned_index(
         _param: &SystemParamItem<Self::Param>,
-        _query_item: MainEntity,
+        _query_item: (Entity, MainEntity),
     ) -> Option<NonMaxU32> {
         None
     }

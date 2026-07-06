@@ -128,7 +128,7 @@ pub trait GetFullBatchData: GetBatchData {
     /// function will never be called.
     fn get_index_and_compare_data(
         param: &SystemParamItem<Self::Param>,
-        query_item: MainEntity,
+        query_item: (Entity, MainEntity),
     ) -> Option<(NonMaxU32, Option<Self::CompareData>)>;
 
     /// Returns the index of the [`GetFullBatchData::BufferInputData`] that the
@@ -145,7 +145,7 @@ pub trait GetFullBatchData: GetBatchData {
     /// so there's no index to return.
     fn get_binned_index(
         param: &SystemParamItem<Self::Param>,
-        query_item: MainEntity,
+        query_item: (Entity, MainEntity),
     ) -> Option<NonMaxU32>;
 
     /// Writes the [`gpu_preprocessing::IndirectParametersGpuMetadata`]

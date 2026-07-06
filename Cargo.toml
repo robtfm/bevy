@@ -472,6 +472,9 @@ pbr_anisotropy_texture = ["bevy_internal/pbr_anisotropy_texture"]
 # Enable support for PCSS, at the risk of blowing past the global, per-shader sampler limit on older/lower-end GPUs
 experimental_pbr_pcss = ["bevy_internal/experimental_pbr_pcss"]
 
+# Enable runtime validation that the mirrored mesh/material instance components stay in sync with the authoritative `MainEntity`-keyed maps (debugging aid; has a runtime cost)
+validate_instance_mirror = ["bevy_internal/validate_instance_mirror"]
+
 # Enable support for specular textures in the `StandardMaterial`, at the risk of blowing past the global, per-shader texture limit on older/lower-end GPUs
 pbr_specular_textures = ["bevy_internal/pbr_specular_textures"]
 

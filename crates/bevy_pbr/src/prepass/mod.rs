@@ -4,9 +4,9 @@ use crate::{
     alpha_mode_pipeline_key, binding_arrays_are_usable, buffer_layout,
     collect_meshes_for_gpu_building, material_bind_groups::MaterialBindGroupAllocator,
     queue_material_meshes, set_mesh_motion_vector_flags, setup_morph_and_skinning_defs, skin,
-    DrawMesh, EntitySpecializationTicks, Material, MaterialPipeline, MaterialPipelineKey,
-    MeshLayouts, MeshPipeline, MeshPipelineKey, OpaqueRendererMethod, PreparedMaterial,
-    RenderLightmaps, RenderMaterialInstances, RenderMeshInstanceFlags, RenderMeshInstances,
+    DrawMesh, EntitySpecializationTicks, Material, MaterialInstanceLookup, MaterialPipeline,
+    MaterialPipelineKey, MeshInstanceLookup, MeshLayouts, MeshPipeline, MeshPipelineKey,
+    OpaqueRendererMethod, PreparedMaterial, RenderLightmaps, RenderMeshInstanceFlags,
     RenderPhaseType, SetMaterialBindGroup, SetMeshBindGroup, ShadowView, StandardMaterial,
 };
 use bevy_app::{App, Plugin, PreUpdate};
@@ -875,8 +875,8 @@ pub fn check_prepass_views_need_specialization(
 pub fn specialize_prepass_material_meshes<M>(
     render_meshes: Res<RenderAssets<RenderMesh>>,
     render_materials: Res<RenderAssets<PreparedMaterial<M>>>,
-    render_mesh_instances: Res<RenderMeshInstances>,
-    render_material_instances: Res<RenderMaterialInstances>,
+    render_mesh_instances: MeshInstanceLookup,
+    render_material_instances: MaterialInstanceLookup,
     render_lightmaps: Res<RenderLightmaps>,
     render_visibility_ranges: Res<RenderVisibilityRanges>,
     material_bind_group_allocator: Res<MaterialBindGroupAllocator<M>>,
@@ -941,15 +941,17 @@ pub fn specialize_prepass_material_meshes<M>(
             .entry(extracted_view.retained_view_entity)
             .or_default();
 
-        for (_, visible_entity) in visible_entities.iter::<Mesh3d>() {
-            let Some(material_instance) = render_material_instances.instances.get(visible_entity)
+        for (render_entity, visible_entity) in visible_entities.iter::<Mesh3d>() {
+            let Some(material_instance) =
+                render_material_instances.instance(*render_entity, *visible_entity)
             else {
                 continue;
             };
             let Ok(material_asset_id) = material_instance.asset_id.try_typed::<M>() else {
                 continue;
             };
-            let Some(mesh_instance) = render_mesh_instances.render_mesh_queue_data(*visible_entity)
+            let Some(mesh_instance) =
+                render_mesh_instances.render_mesh_queue_data(*render_entity, *visible_entity)
             else {
                 continue;
             };
@@ -1073,9 +1075,9 @@ pub fn specialize_prepass_material_meshes<M>(
 }
 
 pub fn queue_prepass_material_meshes<M: Material>(
-    render_mesh_instances: Res<RenderMeshInstances>,
+    render_mesh_instances: MeshInstanceLookup,
     render_materials: Res<RenderAssets<PreparedMaterial<M>>>,
-    render_material_instances: Res<RenderMaterialInstances>,
+    render_material_instances: MaterialInstanceLookup,
     mesh_allocator: Res<MeshAllocator>,
     gpu_preprocessing_support: Res<GpuPreprocessingSupport>,
     mut opaque_prepass_render_phases: ResMut<ViewBinnedRenderPhases<Opaque3dPrepass>>,
@@ -1135,14 +1137,16 @@ pub fn queue_prepass_material_meshes<M: Material>(
                 continue;
             }
 
-            let Some(material_instance) = render_material_instances.instances.get(visible_entity)
+            let Some(material_instance) =
+                render_material_instances.instance(*render_entity, *visible_entity)
             else {
                 continue;
             };
             let Ok(material_asset_id) = material_instance.asset_id.try_typed::<M>() else {
                 continue;
             };
-            let Some(mesh_instance) = render_mesh_instances.render_mesh_queue_data(*visible_entity)
+            let Some(mesh_instance) =
+                render_mesh_instances.render_mesh_queue_data(*render_entity, *visible_entity)
             else {
                 continue;
             };

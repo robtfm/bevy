@@ -26,7 +26,7 @@ use bevy_ecs::{
     prelude::*,
     system::{
         lifetimeless::{SRes, SResMut},
-        SystemParamItem,
+        SystemParam, SystemParamItem,
     },
 };
 use bevy_platform::collections::hash_map::Entry;
@@ -47,7 +47,7 @@ use bevy_render::{
     render_phase::*,
     render_resource::*,
     renderer::RenderDevice,
-    sync_world::MainEntity,
+    sync_world::{MainEntity, RenderEntity},
     view::{ExtractedView, Msaa, RenderVisibilityRanges, RetainedViewEntity, ViewVisibility},
     Extract,
 };
@@ -558,7 +558,7 @@ pub struct SetMaterialBindGroup<M: Material, const I: usize>(PhantomData<M>);
 impl<P: PhaseItem, M: Material, const I: usize> RenderCommand<P> for SetMaterialBindGroup<M, I> {
     type Param = (
         SRes<RenderAssets<PreparedMaterial<M>>>,
-        SRes<RenderMaterialInstances>,
+        MaterialInstanceLookup<'static, 'static>,
         SRes<MaterialBindGroupAllocator<M>>,
     );
     type ViewQuery = ();
@@ -577,10 +577,11 @@ impl<P: PhaseItem, M: Material, const I: usize> RenderCommand<P> for SetMaterial
         pass: &mut TrackedRenderPass<'w>,
     ) -> RenderCommandResult {
         let materials = materials.into_inner();
-        let material_instances = material_instances.into_inner();
         let material_bind_group_allocator = material_bind_group_allocator.into_inner();
 
-        let Some(material_instance) = material_instances.instances.get(&item.main_entity()) else {
+        let Some(material_instance) =
+            material_instances.instance(item.entity(), item.main_entity())
+        else {
             return RenderCommandResult::Skip;
         };
         let Ok(material_asset_id) = material_instance.asset_id.try_typed::<M>() else {
@@ -632,12 +633,173 @@ impl RenderMaterialInstances {
 ///
 /// Note that this uses an [`UntypedAssetId`] and isn't generic over the
 /// material type, for simplicity.
+#[derive(Clone)]
 pub struct RenderMaterialInstance {
     /// The material asset.
     pub asset_id: UntypedAssetId,
     /// The [`RenderMaterialInstances::current_change_tick`] at which this
     /// material instance was last modified.
     pub last_change_tick: Tick,
+}
+
+/// The [`RenderMaterialInstance`] for a mesh, stored as a component on the
+/// render world entity.
+///
+/// This mirrors the entry in [`RenderMaterialInstances`], which remains the
+/// authoritative copy. Storing the data as a component as well allows the hot
+/// specialization and queuing code paths to fetch it with an archetype row
+/// access instead of a hash probe.
+#[derive(Component, Deref)]
+pub struct RenderMaterialInstanceC(pub RenderMaterialInstance);
+
+/// A [`SystemParam`] that looks up the [`RenderMaterialInstance`] for a mesh.
+///
+/// The [`RenderMaterialInstances`] resource remains the authoritative copy of
+/// the data; each entry is mirrored into a [`RenderMaterialInstanceC`]
+/// component on the corresponding render world entity, so the lookup is an
+/// archetype row access instead of a hash probe whenever that component is
+/// present.
+#[derive(SystemParam)]
+pub struct MaterialInstanceLookup<'w, 's> {
+    /// The authoritative [`RenderMaterialInstances`] resource.
+    pub instances: Res<'w, RenderMaterialInstances>,
+    /// The per-entity mirrored material instance data.
+    pub components: Query<'w, 's, &'static RenderMaterialInstanceC>,
+}
+
+impl MaterialInstanceLookup<'_, '_> {
+    /// Returns the [`RenderMaterialInstance`] for the given entity, if it has
+    /// one.
+    #[inline]
+    pub fn instance(
+        &self,
+        render_entity: Entity,
+        main_entity: MainEntity,
+    ) -> Option<&RenderMaterialInstance> {
+        if let Ok(instance_component) = self.components.get(render_entity) {
+            #[cfg(feature = "validate_instance_mirror")]
+            material_mirror_validation::assert_component_matches_map(
+                &self.instances,
+                render_entity,
+                main_entity,
+                instance_component,
+            );
+            return Some(&instance_component.0);
+        }
+        self.instances.instances.get(&main_entity)
+    }
+}
+
+/// Runtime validation of the [`RenderMaterialInstanceC`] mirror, enabled by
+/// the `validate_instance_mirror` feature.
+///
+/// The `MainEntity`-keyed [`RenderMaterialInstances`] resource is
+/// authoritative; these checks panic if the mirrored components ever diverge
+/// from it.
+#[cfg(feature = "validate_instance_mirror")]
+pub mod material_mirror_validation {
+    use super::*;
+    use bevy_render::sync_world::MainEntityHashMap;
+
+    /// Checks a component-path hit in [`MaterialInstanceLookup`] against the
+    /// authoritative [`RenderMaterialInstances`] map, panicking on divergence.
+    ///
+    /// A map entry without a mirroring component is *not* checked here (the
+    /// component path simply didn't hit); that direction is covered by
+    /// [`material_mirror_validation::validate_material_instance_mirror`].
+    pub fn assert_component_matches_map(
+        instances: &RenderMaterialInstances,
+        render_entity: Entity,
+        main_entity: MainEntity,
+        component: &RenderMaterialInstanceC,
+    ) {
+        let Some(map_instance) = instances.instances.get(&main_entity) else {
+            panic!(
+                "validate_instance_mirror: render entity {render_entity} has a \
+                 `RenderMaterialInstanceC` component, but `RenderMaterialInstances` has no entry \
+                 for main entity {main_entity:?}"
+            );
+        };
+        assert_instances_match(render_entity, main_entity, component, map_instance);
+    }
+
+    /// Panics if any field of a mirrored [`RenderMaterialInstance`] differs
+    /// between the component and the authoritative map entry.
+    fn assert_instances_match(
+        render_entity: Entity,
+        main_entity: MainEntity,
+        component: &RenderMaterialInstance,
+        map_instance: &RenderMaterialInstance,
+    ) {
+        macro_rules! check_field {
+            ($field:ident) => {
+                assert_eq!(
+                    component.$field,
+                    map_instance.$field,
+                    "validate_instance_mirror: `RenderMaterialInstanceC` on render entity \
+                     {render_entity} diverges from the `RenderMaterialInstances` entry for main \
+                     entity {main_entity:?} in field `{}`",
+                    stringify!($field),
+                );
+            };
+        }
+        check_field!(asset_id);
+        check_field!(last_change_tick);
+    }
+
+    /// A per-frame sweep that checks the [`RenderMaterialInstanceC`] mirror
+    /// for symmetry with the authoritative [`RenderMaterialInstances`] map in
+    /// both directions, panicking on divergence.
+    ///
+    /// All mutations of the map and the mirror happen in [`ExtractSchedule`]
+    /// (with the queued component insertions/removals applied in
+    /// [`RenderSet::ExtractCommands`]), so this runs in
+    /// [`RenderSet::PrepareMeshes`], validating exactly the state that the
+    /// specialization, queuing, and draw code paths go on to read.
+    ///
+    /// Unlike the mesh instance map, the material instance map doesn't store
+    /// the render entity, so the sweep correlates the two worlds through the
+    /// [`MainEntity`] component that entity synchronization places on render
+    /// world entities.
+    pub fn validate_material_instance_mirror(
+        material_instances: Res<RenderMaterialInstances>,
+        components: Query<(Entity, &MainEntity, &RenderMaterialInstanceC)>,
+        synced_entities: Query<(Entity, &MainEntity)>,
+    ) {
+        // Every component must have a matching map entry.
+        for (render_entity, main_entity, component) in &components {
+            let Some(map_instance) = material_instances.instances.get(main_entity) else {
+                panic!(
+                    "validate_instance_mirror: render entity {render_entity} has a \
+                     `RenderMaterialInstanceC` component, but `RenderMaterialInstances` has no \
+                     entry for main entity {main_entity:?}"
+                );
+            };
+            assert_instances_match(render_entity, *main_entity, component, map_instance);
+        }
+
+        // Every map entry whose main entity has a live synced render entity
+        // must have a matching component on that render entity. (Entries whose
+        // main entity has no render world counterpart are fine: the map also
+        // covers entities that aren't synced.)
+        let mut render_entities = MainEntityHashMap::<Entity>::default();
+        for (render_entity, main_entity) in &synced_entities {
+            render_entities.insert(*main_entity, render_entity);
+        }
+        for (main_entity, map_instance) in &material_instances.instances {
+            let Some(&render_entity) = render_entities.get(main_entity) else {
+                continue;
+            };
+            let Ok((_, _, component)) = components.get(render_entity) else {
+                panic!(
+                    "validate_instance_mirror: `RenderMaterialInstances` has an entry for main \
+                     entity {main_entity:?} whose live render entity {render_entity} has no \
+                     `RenderMaterialInstanceC` component"
+                );
+            };
+            assert_instances_match(render_entity, *main_entity, component, map_instance);
+        }
+    }
 }
 
 /// A [`SystemSet`] that contains all `extract_mesh_materials` systems.
@@ -725,28 +887,58 @@ fn mark_meshes_as_changed_if_their_materials_changed<M>(
 /// scene.
 fn extract_mesh_materials<M: Material>(
     mut material_instances: ResMut<RenderMaterialInstances>,
+    mut commands: Commands,
     changed_meshes_query: Extract<
         Query<
-            (Entity, &ViewVisibility, &MeshMaterial3d<M>),
-            Or<(Changed<ViewVisibility>, Changed<MeshMaterial3d<M>>)>,
+            (
+                Entity,
+                Option<RenderEntity>,
+                &ViewVisibility,
+                &MeshMaterial3d<M>,
+            ),
+            // `Changed<RenderEntity>` catches render-entity replacement: when
+            // any synced component is removed from a live main entity,
+            // `entity_sync_system` clears and respawns its render entity, so
+            // the mirror component died with the old render entity and must
+            // be re-established even though material and visibility are
+            // unchanged.
+            Or<(
+                Changed<ViewVisibility>,
+                Changed<MeshMaterial3d<M>>,
+                Changed<RenderEntity>,
+            )>,
         >,
     >,
 ) {
     let last_change_tick = material_instances.current_change_tick;
 
-    for (entity, view_visibility, material) in &changed_meshes_query {
+    for (entity, render_entity, view_visibility, material) in &changed_meshes_query {
         if view_visibility.get() {
-            material_instances.instances.insert(
-                entity.into(),
-                RenderMaterialInstance {
-                    asset_id: material.id().untyped(),
-                    last_change_tick,
-                },
-            );
+            let material_instance = RenderMaterialInstance {
+                asset_id: material.id().untyped(),
+                last_change_tick,
+            };
+            // Mirror the new data into the [`RenderMaterialInstanceC`]
+            // component on the render world entity, if the entity has one.
+            // (These commands are applied in `RenderSet::ExtractCommands`,
+            // before any of the systems that read the component run.)
+            if let Some(render_entity) = render_entity {
+                commands
+                    .entity(render_entity)
+                    .insert(RenderMaterialInstanceC(material_instance.clone()));
+            }
+            material_instances
+                .instances
+                .insert(entity.into(), material_instance);
         } else {
             material_instances
                 .instances
                 .remove(&MainEntity::from(entity));
+            if let Some(render_entity) = render_entity {
+                if let Ok(mut render_entity_commands) = commands.get_entity(render_entity) {
+                    render_entity_commands.remove::<RenderMaterialInstanceC>();
+                }
+            }
         }
     }
 }
@@ -767,6 +959,8 @@ fn extract_mesh_materials<M: Material>(
 /// bump [`RenderMaterialInstances::current_change_tick`] once.
 fn early_sweep_material_instances<M>(
     mut material_instances: ResMut<RenderMaterialInstances>,
+    mut commands: Commands,
+    render_entities_query: Extract<Query<RenderEntity>>,
     mut removed_materials_query: Extract<RemovedComponents<MeshMaterial3d<M>>>,
 ) where
     M: Material,
@@ -778,6 +972,7 @@ fn early_sweep_material_instances<M>(
             // Only sweep the entry if it wasn't updated this frame.
             if occupied_entry.get().last_change_tick != last_change_tick {
                 occupied_entry.remove();
+                remove_material_instance_component(entity, &render_entities_query, &mut commands);
             }
         }
     }
@@ -791,6 +986,8 @@ fn early_sweep_material_instances<M>(
 /// preparation for a new frame.
 pub(crate) fn late_sweep_material_instances(
     mut material_instances: ResMut<RenderMaterialInstances>,
+    mut commands: Commands,
+    render_entities_query: Extract<Query<RenderEntity>>,
     mut removed_visibilities_query: Extract<RemovedComponents<ViewVisibility>>,
 ) {
     let last_change_tick = material_instances.current_change_tick;
@@ -802,6 +999,7 @@ pub(crate) fn late_sweep_material_instances(
             // re-added in the same frame.
             if occupied_entry.get().last_change_tick != last_change_tick {
                 occupied_entry.remove();
+                remove_material_instance_component(entity, &render_entities_query, &mut commands);
             }
         }
     }
@@ -809,6 +1007,25 @@ pub(crate) fn late_sweep_material_instances(
     material_instances
         .current_change_tick
         .set(last_change_tick.get() + 1);
+}
+
+/// Removes the [`RenderMaterialInstanceC`] component that mirrors a swept
+/// [`RenderMaterialInstances`] entry from the corresponding render world
+/// entity, if that entity still exists.
+///
+/// (It won't exist if the main entity was despawned, in which case the render
+/// entity, and the component along with it, has already been despawned by the
+/// entity synchronization that runs before extraction.)
+fn remove_material_instance_component(
+    entity: Entity,
+    render_entities: &Query<RenderEntity>,
+    commands: &mut Commands,
+) {
+    if let Ok(render_entity) = render_entities.get(entity) {
+        if let Ok(mut render_entity_commands) = commands.get_entity(render_entity) {
+            render_entity_commands.remove::<RenderMaterialInstanceC>();
+        }
+    }
 }
 
 pub fn extract_entities_needs_specialization<M>(
@@ -958,8 +1175,8 @@ pub fn check_entities_needing_specialization<M>(
 pub fn specialize_material_meshes<M: Material>(
     render_meshes: Res<RenderAssets<RenderMesh>>,
     render_materials: Res<RenderAssets<PreparedMaterial<M>>>,
-    render_mesh_instances: Res<RenderMeshInstances>,
-    render_material_instances: Res<RenderMaterialInstances>,
+    render_mesh_instances: MeshInstanceLookup,
+    render_material_instances: MaterialInstanceLookup,
     render_lightmaps: Res<RenderLightmaps>,
     render_visibility_ranges: Res<RenderVisibilityRanges>,
     (
@@ -1013,15 +1230,17 @@ pub fn specialize_material_meshes<M: Material>(
             .entry(view.retained_view_entity)
             .or_default();
 
-        for (_, visible_entity) in visible_entities.iter::<Mesh3d>() {
-            let Some(material_instance) = render_material_instances.instances.get(visible_entity)
+        for (render_entity, visible_entity) in visible_entities.iter::<Mesh3d>() {
+            let Some(material_instance) =
+                render_material_instances.instance(*render_entity, *visible_entity)
             else {
                 continue;
             };
             let Ok(material_asset_id) = material_instance.asset_id.try_typed::<M>() else {
                 continue;
             };
-            let Some(mesh_instance) = render_mesh_instances.render_mesh_queue_data(*visible_entity)
+            let Some(mesh_instance) =
+                render_mesh_instances.render_mesh_queue_data(*render_entity, *visible_entity)
             else {
                 continue;
             };
@@ -1114,8 +1333,8 @@ pub fn specialize_material_meshes<M: Material>(
 /// them to [`BinnedRenderPhase`]s or [`SortedRenderPhase`]s as appropriate.
 pub fn queue_material_meshes<M: Material>(
     render_materials: Res<RenderAssets<PreparedMaterial<M>>>,
-    render_mesh_instances: Res<RenderMeshInstances>,
-    render_material_instances: Res<RenderMaterialInstances>,
+    render_mesh_instances: MeshInstanceLookup,
+    render_material_instances: MaterialInstanceLookup,
     mesh_allocator: Res<MeshAllocator>,
     gpu_preprocessing_support: Res<GpuPreprocessingSupport>,
     mut opaque_render_phases: ResMut<ViewBinnedRenderPhases<Opaque3d>>,
@@ -1165,14 +1384,16 @@ pub fn queue_material_meshes<M: Material>(
                 continue;
             }
 
-            let Some(material_instance) = render_material_instances.instances.get(visible_entity)
+            let Some(material_instance) =
+                render_material_instances.instance(*render_entity, *visible_entity)
             else {
                 continue;
             };
             let Ok(material_asset_id) = material_instance.asset_id.try_typed::<M>() else {
                 continue;
             };
-            let Some(mesh_instance) = render_mesh_instances.render_mesh_queue_data(*visible_entity)
+            let Some(mesh_instance) =
+                render_mesh_instances.render_mesh_queue_data(*render_entity, *visible_entity)
             else {
                 continue;
             };

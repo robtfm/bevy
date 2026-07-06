@@ -462,7 +462,7 @@ impl GetFullBatchData for Mesh2dPipeline {
 
     fn get_index_and_compare_data(
         _: &SystemParamItem<Self::Param>,
-        _query_item: MainEntity,
+        _query_item: (Entity, MainEntity),
     ) -> Option<(NonMaxU32, Option<Self::CompareData>)> {
         error!(
             "`get_index_and_compare_data` is only intended for GPU mesh uniform building, \
@@ -473,7 +473,7 @@ impl GetFullBatchData for Mesh2dPipeline {
 
     fn get_binned_index(
         _: &SystemParamItem<Self::Param>,
-        _query_item: MainEntity,
+        _query_item: (Entity, MainEntity),
     ) -> Option<NonMaxU32> {
         error!(
             "`get_binned_index` is only intended for GPU mesh uniform building, \

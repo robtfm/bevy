@@ -121,6 +121,7 @@ The default feature set enables most of the expected features of a game engine, 
 |trace_tracy|Tracing support, exposing a port for Tracy|
 |trace_tracy_memory|Tracing support, with memory profiling, exposing a port for Tracy|
 |track_location|Enables source location tracking for change detection and spawning/despawning, which can assist with debugging|
+|validate_instance_mirror|Enable runtime validation that the mirrored mesh/material instance components stay in sync with the authoritative `MainEntity`-keyed maps (debugging aid; has a runtime cost)|
 |wav|WAV audio format support|
 |wayland|Wayland display server support|
 |web|Enables use of browser APIs. Note this is currently only applicable on `wasm32` architectures.|

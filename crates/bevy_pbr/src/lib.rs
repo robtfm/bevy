@@ -486,6 +486,18 @@ impl Plugin for PbrPlugin {
             .init_resource::<LightMeta>()
             .init_resource::<RenderMaterialBindings>();
 
+        // All mutations of `RenderMaterialInstances` and its mirror happen in
+        // `ExtractSchedule` (with the queued component insertions/removals
+        // applied in `RenderSet::ExtractCommands`), so `PrepareMeshes`
+        // validates the state that the specialization and queuing systems
+        // read.
+        #[cfg(feature = "validate_instance_mirror")]
+        render_app.add_systems(
+            Render,
+            material_mirror_validation::validate_material_instance_mirror
+                .in_set(RenderSet::PrepareMeshes),
+        );
+
         render_app.world_mut().add_observer(add_light_view_entities);
         render_app
             .world_mut()

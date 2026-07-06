@@ -152,6 +152,9 @@ pbr_anisotropy_texture = [
 # Percentage-closer soft shadows
 experimental_pbr_pcss = ["bevy_pbr?/experimental_pbr_pcss"]
 
+# Validation of the mirrored mesh/material instance components
+validate_instance_mirror = ["bevy_pbr?/validate_instance_mirror"]
+
 # Specular textures in `StandardMaterial`:
 pbr_specular_textures = [
   "bevy_pbr?/pbr_specular_textures",

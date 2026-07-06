@@ -12,7 +12,7 @@ use bevy_diagnostic::FrameCount;
 use bevy_ecs::{
     prelude::*,
     query::{QueryData, ROQueryItem},
-    system::{lifetimeless::*, SystemParamItem, SystemState},
+    system::{lifetimeless::*, SystemParam, SystemParamItem, SystemState},
 };
 use bevy_image::{BevyDefault, ImageSampler, TextureFormatPixelInfo};
 use bevy_math::{Affine3, Rect, UVec2, Vec3, Vec4};
@@ -36,6 +36,7 @@ use bevy_render::{
     },
     render_resource::*,
     renderer::{RenderAdapter, RenderDevice, RenderQueue},
+    sync_component::SyncComponentPlugin,
     sync_world::MainEntityHashSet,
     texture::{DefaultImageSampler, GpuImage},
     view::{
@@ -72,7 +73,7 @@ use bevy_ecs::component::Tick;
 use bevy_ecs::system::SystemChangeTick;
 use bevy_render::camera::TemporalJitter;
 use bevy_render::prelude::Msaa;
-use bevy_render::sync_world::{MainEntity, MainEntityHashMap};
+use bevy_render::sync_world::{MainEntity, MainEntityHashMap, RenderEntity};
 use bevy_render::view::ExtractedView;
 use bevy_render::RenderSet::PrepareAssets;
 use bytemuck::{Pod, Zeroable};
@@ -173,6 +174,10 @@ impl Plugin for MeshRenderPlugin {
         if app.get_sub_app(RenderApp).is_none() {
             return;
         }
+
+        // Mesh entities need render world counterparts so that
+        // [`RenderMeshInstanceGpuC`] components can be attached to them.
+        app.add_plugins(SyncComponentPlugin::<Mesh3d>::default());
 
         app.add_systems(
             PostUpdate,
@@ -276,6 +281,15 @@ impl Plugin for MeshRenderPlugin {
                                 .before(set_mesh_motion_vector_flags),
                         ),
                     );
+
+                #[cfg(feature = "validate_instance_mirror")]
+                render_app.add_systems(
+                    Render,
+                    mesh_mirror_validation::validate_mesh_instance_mirror
+                        .in_set(RenderSet::PrepareMeshes)
+                        .after(collect_meshes_for_gpu_building)
+                        .after(set_mesh_motion_vector_flags),
+                );
             } else {
                 let render_device = render_app.world().resource::<RenderDevice>();
                 let cpu_batched_instance_buffer =
@@ -725,7 +739,7 @@ pub struct RenderMeshInstanceCpu {
 
 /// CPU data that the render world needs to keep for each entity that contains a
 /// mesh when using GPU mesh uniform building.
-#[derive(Deref, DerefMut)]
+#[derive(Clone, Deref, DerefMut)]
 pub struct RenderMeshInstanceGpu {
     /// Data shared between both the CPU mesh uniform building and the GPU mesh
     /// uniform building paths.
@@ -738,10 +752,24 @@ pub struct RenderMeshInstanceGpu {
     pub translation: Vec3,
     /// The index of the [`MeshInputUniform`] in the buffer.
     pub current_uniform_index: NonMaxU32,
+    /// The render world entity that mirrors this data in its
+    /// [`RenderMeshInstanceGpuC`] component.
+    pub render_entity: Entity,
 }
+
+/// The [`RenderMeshInstanceGpu`] for a mesh, stored as a component on the
+/// render world entity when using GPU mesh uniform building.
+///
+/// This mirrors the entry in [`RenderMeshInstancesGpu`], which remains the
+/// authoritative copy. Storing the data as a component as well allows the hot
+/// specialization, queuing, batching, and drawing code paths to fetch it with
+/// an archetype row access instead of a hash probe.
+#[derive(Component, Deref, DerefMut)]
+pub struct RenderMeshInstanceGpuC(pub RenderMeshInstanceGpu);
 
 /// CPU data that the render world needs to keep about each entity that contains
 /// a mesh.
+#[derive(Clone)]
 pub struct RenderMeshInstanceShared {
     /// The [`AssetId`] of the mesh.
     pub mesh_asset_id: AssetId<Mesh>,
@@ -804,7 +832,7 @@ pub enum RenderMeshInstanceGpuQueue {
         /// Stores GPU data for each entity that became visible or changed in
         /// such a way that necessitates updating the [`MeshInputUniform`] (e.g.
         /// changed transform).
-        changed: Vec<(MainEntity, RenderMeshInstanceGpuBuilder)>,
+        changed: Vec<(MainEntity, Entity, RenderMeshInstanceGpuBuilder)>,
         /// Stores the IDs of entities that became invisible this frame.
         removed: Vec<MainEntity>,
     },
@@ -815,7 +843,12 @@ pub enum RenderMeshInstanceGpuQueue {
         /// Stores GPU data for each entity that became visible or changed in
         /// such a way that necessitates updating the [`MeshInputUniform`] (e.g.
         /// changed transform).
-        changed: Vec<(MainEntity, RenderMeshInstanceGpuBuilder, MeshCullingData)>,
+        changed: Vec<(
+            MainEntity,
+            Entity,
+            RenderMeshInstanceGpuBuilder,
+            MeshCullingData,
+        )>,
         /// Stores the IDs of entities that became invisible this frame.
         removed: Vec<MainEntity>,
     },
@@ -914,6 +947,11 @@ pub struct RenderMeshInstancesCpu(MainEntityHashMap<RenderMeshInstanceCpu>);
 
 /// Information that the render world keeps about each entity that contains a
 /// mesh, when using GPU mesh instance data building.
+///
+/// This map remains the authoritative copy of the data, keyed off the main
+/// entity; each entry is mirrored into a [`RenderMeshInstanceGpuC`] component
+/// on the corresponding render world entity, which the hot in-crate code
+/// paths read instead of probing this map.
 #[derive(Default, Deref, DerefMut)]
 pub struct RenderMeshInstancesGpu(MainEntityHashMap<RenderMeshInstanceGpu>);
 
@@ -950,13 +988,18 @@ impl RenderMeshInstances {
 
     /// Inserts the given flags into the CPU or GPU render mesh instance data
     /// for the given mesh as appropriate.
-    fn insert_mesh_instance_flags(&mut self, entity: MainEntity, flags: RenderMeshInstanceFlags) {
+    fn insert_mesh_instance_flags(
+        &mut self,
+        entity: MainEntity,
+        flags: RenderMeshInstanceFlags,
+        instance_components: &mut Query<&mut RenderMeshInstanceGpuC>,
+    ) {
         match *self {
             RenderMeshInstances::CpuBuilding(ref mut instances) => {
                 instances.insert_mesh_instance_flags(entity, flags);
             }
             RenderMeshInstances::GpuBuilding(ref mut instances) => {
-                instances.insert_mesh_instance_flags(entity, flags);
+                instances.insert_mesh_instance_flags(entity, flags, instance_components);
             }
         }
     }
@@ -1004,10 +1047,20 @@ impl RenderMeshInstancesGpu {
     }
 
     /// Inserts the given flags into the render mesh instance data for the given
-    /// mesh.
-    fn insert_mesh_instance_flags(&mut self, entity: MainEntity, flags: RenderMeshInstanceFlags) {
-        if let Some(instance) = self.get_mut(&entity) {
-            instance.flags.insert(flags);
+    /// mesh, in both the map and the mirroring [`RenderMeshInstanceGpuC`]
+    /// component.
+    fn insert_mesh_instance_flags(
+        &mut self,
+        entity: MainEntity,
+        flags: RenderMeshInstanceFlags,
+        instance_components: &mut Query<&mut RenderMeshInstanceGpuC>,
+    ) {
+        let Some(instance) = self.get_mut(&entity) else {
+            return;
+        };
+        instance.flags.insert(flags);
+        if let Ok(mut instance_component) = instance_components.get_mut(instance.render_entity) {
+            instance_component.flags.insert(flags);
         }
     }
 }
@@ -1047,6 +1100,7 @@ impl RenderMeshInstanceGpuQueue {
     fn push(
         &mut self,
         entity: MainEntity,
+        render_entity: Entity,
         instance_builder: RenderMeshInstanceGpuBuilder,
         culling_data_builder: Option<MeshCullingData>,
     ) {
@@ -1058,7 +1112,7 @@ impl RenderMeshInstanceGpuQueue {
                 },
                 None,
             ) => {
-                queue.push((entity, instance_builder));
+                queue.push((entity, render_entity, instance_builder));
             }
             (
                 &mut RenderMeshInstanceGpuQueue::GpuCulling {
@@ -1067,17 +1121,27 @@ impl RenderMeshInstanceGpuQueue {
                 },
                 Some(culling_data_builder),
             ) => {
-                queue.push((entity, instance_builder, culling_data_builder));
+                queue.push((
+                    entity,
+                    render_entity,
+                    instance_builder,
+                    culling_data_builder,
+                ));
             }
             (_, None) => {
                 *self = RenderMeshInstanceGpuQueue::CpuCulling {
-                    changed: vec![(entity, instance_builder)],
+                    changed: vec![(entity, render_entity, instance_builder)],
                     removed: vec![],
                 };
             }
             (_, Some(culling_data_builder)) => {
                 *self = RenderMeshInstanceGpuQueue::GpuCulling {
-                    changed: vec![(entity, instance_builder, culling_data_builder)],
+                    changed: vec![(
+                        entity,
+                        render_entity,
+                        instance_builder,
+                        culling_data_builder,
+                    )],
                     removed: vec![],
                 };
             }
@@ -1111,11 +1175,16 @@ impl RenderMeshInstanceGpuQueue {
 
 impl RenderMeshInstanceGpuBuilder {
     /// Flushes this mesh instance to the [`RenderMeshInstanceGpu`] and
-    /// [`MeshInputUniform`] tables, replacing the existing entry if applicable.
+    /// [`MeshInputUniform`] tables, replacing the existing entry if applicable,
+    /// and mirrors it into the [`RenderMeshInstanceGpuC`] component on the
+    /// render world entity.
     fn update(
         mut self,
         entity: MainEntity,
-        render_mesh_instances: &mut MainEntityHashMap<RenderMeshInstanceGpu>,
+        render_entity: Entity,
+        render_mesh_instances: &mut RenderMeshInstancesGpu,
+        instance_components: &mut Query<&mut RenderMeshInstanceGpuC>,
+        commands: &mut Commands,
         current_input_buffer: &mut InstanceInputUniformBuffer<MeshInputUniform>,
         previous_input_buffer: &mut InstanceInputUniformBuffer<MeshInputUniform>,
         mesh_allocator: &MeshAllocator,
@@ -1218,26 +1287,51 @@ impl RenderMeshInstanceGpuBuilder {
                 // Write in the new mesh input uniform.
                 current_input_buffer.set(current_uniform_index, mesh_input_uniform);
 
-                occupied_entry.replace_entry_with(|_, _| {
-                    Some(RenderMeshInstanceGpu {
-                        translation: self.world_from_local.translation,
-                        shared: self.shared,
-                        current_uniform_index: NonMaxU32::new(current_uniform_index)
-                            .unwrap_or_default(),
-                    })
-                });
+                let render_mesh_instance = RenderMeshInstanceGpu {
+                    translation: self.world_from_local.translation,
+                    shared: self.shared,
+                    current_uniform_index: NonMaxU32::new(current_uniform_index)
+                        .unwrap_or_default(),
+                    render_entity,
+                };
+
+                // Mirror the new data into the component, updating it in place
+                // if we can. The component might be missing if it was queued
+                // for insertion earlier this frame (e.g. if this mesh was both
+                // reextracted and changed), in which case we queue the new
+                // value.
+                match instance_components.get_mut(render_entity) {
+                    Ok(mut instance_component) => {
+                        instance_component.0 = render_mesh_instance.clone();
+                    }
+                    Err(_) => {
+                        commands
+                            .entity(render_entity)
+                            .insert(RenderMeshInstanceGpuC(render_mesh_instance.clone()));
+                    }
+                }
+
+                occupied_entry.replace_entry_with(|_, _| Some(render_mesh_instance));
             }
 
             Entry::Vacant(vacant_entry) => {
                 // No, this is a new entity. Push its data on to the buffer.
                 current_uniform_index = current_input_buffer.add(mesh_input_uniform);
 
-                vacant_entry.insert(RenderMeshInstanceGpu {
+                let render_mesh_instance = RenderMeshInstanceGpu {
                     translation: self.world_from_local.translation,
                     shared: self.shared,
                     current_uniform_index: NonMaxU32::new(current_uniform_index)
                         .unwrap_or_default(),
-                });
+                    render_entity,
+                };
+
+                // Mirror the new data into the component.
+                commands
+                    .entity(render_entity)
+                    .insert(RenderMeshInstanceGpuC(render_mesh_instance.clone()));
+
+                vacant_entry.insert(render_mesh_instance);
             }
         }
 
@@ -1249,11 +1343,22 @@ impl RenderMeshInstanceGpuBuilder {
 /// invisible from the buffer.
 fn remove_mesh_input_uniform(
     entity: MainEntity,
-    render_mesh_instances: &mut MainEntityHashMap<RenderMeshInstanceGpu>,
+    render_mesh_instances: &mut RenderMeshInstancesGpu,
     current_input_buffer: &mut InstanceInputUniformBuffer<MeshInputUniform>,
+    commands: &mut Commands,
 ) -> Option<u32> {
     // Remove the uniform data.
     let removed_render_mesh_instance = render_mesh_instances.remove(&entity)?;
+
+    // Remove the component from the render world entity, if it still exists.
+    // (It won't if the main entity was despawned, in which case the render
+    // entity, and the component along with it, has already been despawned by
+    // the entity synchronization that runs before extraction.)
+    if let Ok(mut render_entity_commands) =
+        commands.get_entity(removed_render_mesh_instance.render_entity)
+    {
+        render_entity_commands.remove::<RenderMeshInstanceGpuC>();
+    }
 
     let removed_uniform_index = removed_render_mesh_instance.current_uniform_index.get();
     current_input_buffer.remove(removed_uniform_index);
@@ -1311,6 +1416,236 @@ pub struct RenderMeshQueueData<'a> {
     /// The index of the [`MeshInputUniform`] in the GPU buffer for this mesh
     /// instance.
     pub current_uniform_index: InputUniformIndex,
+}
+
+/// A [`SystemParam`] that looks up the render mesh instance data for a mesh,
+/// regardless of whether CPU or GPU mesh uniform building is in use.
+///
+/// When GPU mesh uniform building is in use, the data lives in the
+/// [`RenderMeshInstanceGpuC`] component on the render world entity, so the
+/// lookup is an archetype row access instead of a hash probe.
+#[derive(SystemParam)]
+pub struct MeshInstanceLookup<'w, 's> {
+    /// The [`RenderMeshInstances`] resource, which holds the data itself when
+    /// CPU mesh uniform building is in use.
+    pub instances: Res<'w, RenderMeshInstances>,
+    /// The per-entity mesh instance data, when GPU mesh uniform building is in
+    /// use.
+    pub gpu_instances: Query<'w, 's, &'static RenderMeshInstanceGpuC>,
+}
+
+impl MeshInstanceLookup<'_, '_> {
+    /// Returns the ID of the mesh asset attached to the given entity, if any.
+    #[inline]
+    pub fn mesh_asset_id(
+        &self,
+        render_entity: Entity,
+        main_entity: MainEntity,
+    ) -> Option<AssetId<Mesh>> {
+        if let Ok(instance_component) = self.gpu_instances.get(render_entity) {
+            #[cfg(feature = "validate_instance_mirror")]
+            mesh_mirror_validation::assert_component_matches_map(
+                &self.instances,
+                render_entity,
+                main_entity,
+                instance_component,
+            );
+            return Some(instance_component.mesh_asset_id);
+        }
+        self.instances.mesh_asset_id(main_entity)
+    }
+
+    /// Constructs [`RenderMeshQueueData`] for the given entity, if it has a
+    /// mesh attached.
+    #[inline]
+    pub fn render_mesh_queue_data(
+        &self,
+        render_entity: Entity,
+        main_entity: MainEntity,
+    ) -> Option<RenderMeshQueueData<'_>> {
+        if let Ok(instance_component) = self.gpu_instances.get(render_entity) {
+            #[cfg(feature = "validate_instance_mirror")]
+            mesh_mirror_validation::assert_component_matches_map(
+                &self.instances,
+                render_entity,
+                main_entity,
+                instance_component,
+            );
+            return Some(RenderMeshQueueData {
+                shared: &instance_component.shared,
+                translation: instance_component.translation,
+                current_uniform_index: InputUniformIndex(
+                    instance_component.current_uniform_index.into(),
+                ),
+            });
+        }
+        self.instances.render_mesh_queue_data(main_entity)
+    }
+
+    /// Returns the [`RenderMeshInstanceGpu`] for the given entity, if it has
+    /// one.
+    ///
+    /// If the component lookup fails (e.g. because the phase item carries a
+    /// placeholder render entity), this falls back to the main-entity-keyed
+    /// map.
+    #[inline]
+    pub fn gpu_instance(
+        &self,
+        render_entity: Entity,
+        main_entity: MainEntity,
+    ) -> Option<&RenderMeshInstanceGpu> {
+        if let Ok(instance_component) = self.gpu_instances.get(render_entity) {
+            #[cfg(feature = "validate_instance_mirror")]
+            mesh_mirror_validation::assert_component_matches_map(
+                &self.instances,
+                render_entity,
+                main_entity,
+                instance_component,
+            );
+            return Some(&instance_component.0);
+        }
+        match *self.instances {
+            RenderMeshInstances::GpuBuilding(ref instances) => instances.get(&main_entity),
+            RenderMeshInstances::CpuBuilding(_) => None,
+        }
+    }
+}
+
+/// Runtime validation of the [`RenderMeshInstanceGpuC`] mirror, enabled by the
+/// `validate_instance_mirror` feature.
+///
+/// The `MainEntity`-keyed [`RenderMeshInstances`] map is authoritative; these
+/// checks panic if the mirrored components ever diverge from it.
+#[cfg(feature = "validate_instance_mirror")]
+pub mod mesh_mirror_validation {
+    use super::*;
+    use bevy_ecs::entity::Entities;
+
+    /// Checks a component-path hit in [`MeshInstanceLookup`] against the
+    /// authoritative [`RenderMeshInstances`] map, panicking on divergence.
+    ///
+    /// A map entry without a mirroring component is *not* checked here (the
+    /// component path simply didn't hit); that direction is covered by
+    /// [`validate_mesh_instance_mirror`].
+    pub fn assert_component_matches_map(
+        instances: &RenderMeshInstances,
+        render_entity: Entity,
+        main_entity: MainEntity,
+        component: &RenderMeshInstanceGpuC,
+    ) {
+        let RenderMeshInstances::GpuBuilding(instances) = instances else {
+            panic!(
+                "validate_instance_mirror: render entity {render_entity} (main entity \
+                 {main_entity:?}) has a `RenderMeshInstanceGpuC` component, but CPU mesh uniform \
+                 building is in use"
+            );
+        };
+        let Some(map_instance) = instances.get(&main_entity) else {
+            panic!(
+                "validate_instance_mirror: render entity {render_entity} has a \
+                 `RenderMeshInstanceGpuC` component, but `RenderMeshInstances` has no entry for \
+                 main entity {main_entity:?}"
+            );
+        };
+        assert_instances_match(render_entity, main_entity, component, map_instance);
+    }
+
+    /// Panics if any meaningful field of a mirrored [`RenderMeshInstanceGpu`]
+    /// differs between the component and the authoritative map entry.
+    fn assert_instances_match(
+        render_entity: Entity,
+        main_entity: MainEntity,
+        component: &RenderMeshInstanceGpu,
+        map_instance: &RenderMeshInstanceGpu,
+    ) {
+        macro_rules! check_field {
+            ($($field:ident).+) => {
+                assert_eq!(
+                    component.$($field).+,
+                    map_instance.$($field).+,
+                    "validate_instance_mirror: `RenderMeshInstanceGpuC` on render entity \
+                     {render_entity} diverges from the `RenderMeshInstances` entry for main \
+                     entity {main_entity:?} in field `{}`",
+                    stringify!($($field).+),
+                );
+            };
+        }
+        check_field!(shared.mesh_asset_id);
+        check_field!(current_uniform_index);
+        // `RenderMeshInstanceFlags` doesn't implement `PartialEq`/`Debug`, so
+        // compare the raw bits.
+        assert_eq!(
+            component.shared.flags.bits(),
+            map_instance.shared.flags.bits(),
+            "validate_instance_mirror: `RenderMeshInstanceGpuC` on render entity \
+             {render_entity} diverges from the `RenderMeshInstances` entry for main entity \
+             {main_entity:?} in field `shared.flags`",
+        );
+        check_field!(translation);
+    }
+
+    /// A per-frame sweep that checks the [`RenderMeshInstanceGpuC`] mirror for
+    /// symmetry with the authoritative [`RenderMeshInstances`] map in both
+    /// directions, panicking on divergence.
+    ///
+    /// This runs in [`RenderSet::PrepareMeshes`], after the last systems that
+    /// mutate the map and the mirror ([`collect_meshes_for_gpu_building`] and
+    /// [`set_mesh_motion_vector_flags`]; the ordering edges also force the
+    /// sync point that applies their queued component insertions/removals),
+    /// so it validates exactly the state that the specialization, queuing,
+    /// batching, and draw code paths go on to read.
+    pub fn validate_mesh_instance_mirror(
+        render_mesh_instances: Res<RenderMeshInstances>,
+        components: Query<(Entity, &MainEntity, &RenderMeshInstanceGpuC)>,
+        entities: &Entities,
+    ) {
+        let RenderMeshInstances::GpuBuilding(ref instances) = *render_mesh_instances else {
+            return;
+        };
+
+        // Every map entry whose stored render entity is alive must have a
+        // matching component. (An entry can briefly point to a dead render
+        // entity after the main entity is despawned, until the removal queue
+        // sweeps it; skip those.)
+        for (main_entity, map_instance) in instances.iter() {
+            if !entities.contains(map_instance.render_entity) {
+                continue;
+            }
+            let Ok((_, _, component)) = components.get(map_instance.render_entity) else {
+                panic!(
+                    "validate_instance_mirror: `RenderMeshInstances` entry for main entity \
+                     {main_entity:?} stores live render entity {}, but that entity has no \
+                     `RenderMeshInstanceGpuC` component",
+                    map_instance.render_entity,
+                );
+            };
+            assert_instances_match(
+                map_instance.render_entity,
+                *main_entity,
+                component,
+                map_instance,
+            );
+        }
+
+        // Every component must have a matching map entry.
+        for (render_entity, main_entity, component) in &components {
+            let Some(map_instance) = instances.get(main_entity) else {
+                panic!(
+                    "validate_instance_mirror: render entity {render_entity} has a \
+                     `RenderMeshInstanceGpuC` component, but `RenderMeshInstances` has no entry \
+                     for main entity {main_entity:?}"
+                );
+            };
+            assert_eq!(
+                map_instance.render_entity, render_entity,
+                "validate_instance_mirror: `RenderMeshInstances` entry for main entity \
+                 {main_entity:?} stores render entity {}, but the `RenderMeshInstanceGpuC` \
+                 component lives on render entity {render_entity}",
+                map_instance.render_entity,
+            );
+            assert_instances_match(render_entity, *main_entity, component, map_instance);
+        }
+    }
 }
 
 /// A [`SystemSet`] that encompasses both [`extract_meshes_for_cpu_building`]
@@ -1434,6 +1769,7 @@ pub fn extract_meshes_for_cpu_building(
 /// All the data that we need from a mesh in the main world.
 type GpuMeshExtractionQuery = (
     Entity,
+    RenderEntity,
     Read<ViewVisibility>,
     Read<GlobalTransform>,
     Option<Read<PreviousGlobalTransform>>,
@@ -1478,6 +1814,12 @@ pub fn extract_meshes_for_gpu_building(
                 Changed<NoAutomaticBatching>,
                 Changed<VisibilityRange>,
                 Changed<SkinnedMesh>,
+                // Render-entity replacement: removing any synced component
+                // from a live main entity makes `entity_sync_system` clear
+                // and respawn its render entity, destroying the mirror
+                // component; re-extract so it (and the stored render entity)
+                // are re-established on the replacement.
+                Changed<RenderEntity>,
             )>,
         >,
     >,
@@ -1559,6 +1901,7 @@ pub fn extract_meshes_for_gpu_building(
 fn extract_mesh_for_gpu_building(
     (
         entity,
+        render_entity,
         view_visibility,
         transform,
         previous_transform,
@@ -1629,6 +1972,7 @@ fn extract_mesh_for_gpu_building(
 
     queue.push(
         entity.into(),
+        render_entity,
         gpu_mesh_instance_builder,
         gpu_mesh_culling_data,
     );
@@ -1650,16 +1994,23 @@ fn extract_mesh_for_gpu_building(
 /// loop.
 pub(crate) fn set_mesh_motion_vector_flags(
     mut render_mesh_instances: ResMut<RenderMeshInstances>,
+    mut instance_components: Query<&mut RenderMeshInstanceGpuC>,
     skin_uniforms: Res<SkinUniforms>,
     morph_indices: Res<MorphIndices>,
 ) {
     for &entity in skin_uniforms.all_skins() {
-        render_mesh_instances
-            .insert_mesh_instance_flags(entity, RenderMeshInstanceFlags::HAS_PREVIOUS_SKIN);
+        render_mesh_instances.insert_mesh_instance_flags(
+            entity,
+            RenderMeshInstanceFlags::HAS_PREVIOUS_SKIN,
+            &mut instance_components,
+        );
     }
     for &entity in morph_indices.prev.keys() {
-        render_mesh_instances
-            .insert_mesh_instance_flags(entity, RenderMeshInstanceFlags::HAS_PREVIOUS_MORPH);
+        render_mesh_instances.insert_mesh_instance_flags(
+            entity,
+            RenderMeshInstanceFlags::HAS_PREVIOUS_MORPH,
+            &mut instance_components,
+        );
     }
 }
 
@@ -1679,6 +2030,8 @@ pub fn collect_meshes_for_gpu_building(
     skin_uniforms: Res<SkinUniforms>,
     frame_count: Res<FrameCount>,
     mut meshes_to_reextract_next_frame: ResMut<MeshesToReextractNextFrame>,
+    mut instance_components: Query<&mut RenderMeshInstanceGpuC>,
+    mut commands: Commands,
 ) {
     let RenderMeshInstances::GpuBuilding(render_mesh_instances) =
         render_mesh_instances.into_inner()
@@ -1710,10 +2063,13 @@ pub fn collect_meshes_for_gpu_building(
                 ref mut changed,
                 ref mut removed,
             } => {
-                for (entity, mesh_instance_builder) in changed.drain(..) {
+                for (entity, render_entity, mesh_instance_builder) in changed.drain(..) {
                     mesh_instance_builder.update(
                         entity,
+                        render_entity,
                         &mut *render_mesh_instances,
+                        &mut instance_components,
+                        &mut commands,
                         current_input_buffer,
                         previous_input_buffer,
                         &mesh_allocator,
@@ -1731,6 +2087,7 @@ pub fn collect_meshes_for_gpu_building(
                         entity,
                         &mut *render_mesh_instances,
                         current_input_buffer,
+                        &mut commands,
                     );
                 }
             }
@@ -1739,10 +2096,15 @@ pub fn collect_meshes_for_gpu_building(
                 ref mut changed,
                 ref mut removed,
             } => {
-                for (entity, mesh_instance_builder, mesh_culling_builder) in changed.drain(..) {
+                for (entity, render_entity, mesh_instance_builder, mesh_culling_builder) in
+                    changed.drain(..)
+                {
                     let Some(instance_data_index) = mesh_instance_builder.update(
                         entity,
+                        render_entity,
                         &mut *render_mesh_instances,
+                        &mut instance_components,
+                        &mut commands,
                         current_input_buffer,
                         previous_input_buffer,
                         &mesh_allocator,
@@ -1764,6 +2126,7 @@ pub fn collect_meshes_for_gpu_building(
                         entity,
                         &mut *render_mesh_instances,
                         current_input_buffer,
+                        &mut commands,
                     );
                 }
             }
@@ -1902,7 +2265,7 @@ impl MeshPipeline {
 
 impl GetBatchData for MeshPipeline {
     type Param = (
-        SRes<RenderMeshInstances>,
+        MeshInstanceLookup<'static, 'static>,
         SRes<RenderLightmaps>,
         SRes<RenderAssets<RenderMesh>>,
         SRes<MeshAllocator>,
@@ -1924,7 +2287,7 @@ impl GetBatchData for MeshPipeline {
         >,
         (_entity, main_entity): (Entity, MainEntity),
     ) -> Option<(Self::BufferData, Option<Self::CompareData>)> {
-        let RenderMeshInstances::CpuBuilding(ref mesh_instances) = **mesh_instances else {
+        let RenderMeshInstances::CpuBuilding(ref mesh_instances) = *mesh_instances.instances else {
             error!(
                 "`get_batch_data` should never be called in GPU mesh uniform \
                 building mode"
@@ -1965,10 +2328,10 @@ impl GetFullBatchData for MeshPipeline {
 
     fn get_index_and_compare_data(
         (mesh_instances, lightmaps, _, _, _): &SystemParamItem<Self::Param>,
-        main_entity: MainEntity,
+        (entity, main_entity): (Entity, MainEntity),
     ) -> Option<(NonMaxU32, Option<Self::CompareData>)> {
         // This should only be called during GPU building.
-        let RenderMeshInstances::GpuBuilding(ref mesh_instances) = **mesh_instances else {
+        let RenderMeshInstances::GpuBuilding(_) = *mesh_instances.instances else {
             error!(
                 "`get_index_and_compare_data` should never be called in CPU mesh uniform building \
                 mode"
@@ -1976,7 +2339,7 @@ impl GetFullBatchData for MeshPipeline {
             return None;
         };
 
-        let mesh_instance = mesh_instances.get(&main_entity)?;
+        let mesh_instance = mesh_instances.gpu_instance(entity, main_entity)?;
         let maybe_lightmap = lightmaps.render_lightmaps.get(&main_entity);
 
         Some((
@@ -1995,7 +2358,7 @@ impl GetFullBatchData for MeshPipeline {
         >,
         main_entity: MainEntity,
     ) -> Option<Self::BufferData> {
-        let RenderMeshInstances::CpuBuilding(ref mesh_instances) = **mesh_instances else {
+        let RenderMeshInstances::CpuBuilding(ref mesh_instances) = *mesh_instances.instances else {
             error!(
                 "`get_binned_batch_data` should never be called in GPU mesh uniform building mode"
             );
@@ -2023,10 +2386,10 @@ impl GetFullBatchData for MeshPipeline {
 
     fn get_binned_index(
         (mesh_instances, _, _, _, _): &SystemParamItem<Self::Param>,
-        main_entity: MainEntity,
+        (entity, main_entity): (Entity, MainEntity),
     ) -> Option<NonMaxU32> {
         // This should only be called during GPU building.
-        let RenderMeshInstances::GpuBuilding(ref mesh_instances) = **mesh_instances else {
+        let RenderMeshInstances::GpuBuilding(_) = *mesh_instances.instances else {
             error!(
                 "`get_binned_index` should never be called in CPU mesh uniform \
                 building mode"
@@ -2035,8 +2398,8 @@ impl GetFullBatchData for MeshPipeline {
         };
 
         mesh_instances
-            .get(&main_entity)
-            .map(|entity| entity.current_uniform_index)
+            .gpu_instance(entity, main_entity)
+            .map(|mesh_instance| mesh_instance.current_uniform_index)
     }
 
     fn write_batch_indirect_parameters_metadata(
@@ -2937,7 +3300,7 @@ impl<P: PhaseItem, const I: usize> RenderCommand<P> for SetMeshBindGroup<I> {
     type Param = (
         SRes<RenderDevice>,
         SRes<MeshBindGroups>,
-        SRes<RenderMeshInstances>,
+        MeshInstanceLookup<'static, 'static>,
         SRes<SkinUniforms>,
         SRes<MorphIndices>,
         SRes<RenderLightmaps>,
@@ -2961,13 +3324,12 @@ impl<P: PhaseItem, const I: usize> RenderCommand<P> for SetMeshBindGroup<I> {
         pass: &mut TrackedRenderPass<'w>,
     ) -> RenderCommandResult {
         let bind_groups = bind_groups.into_inner();
-        let mesh_instances = mesh_instances.into_inner();
         let skin_uniforms = skin_uniforms.into_inner();
         let morph_indices = morph_indices.into_inner();
 
         let entity = &item.main_entity();
 
-        let Some(mesh_asset_id) = mesh_instances.mesh_asset_id(*entity) else {
+        let Some(mesh_asset_id) = mesh_instances.mesh_asset_id(item.entity(), *entity) else {
             return RenderCommandResult::Success;
         };
 
@@ -3060,7 +3422,7 @@ pub struct DrawMesh;
 impl<P: PhaseItem> RenderCommand<P> for DrawMesh {
     type Param = (
         SRes<RenderAssets<RenderMesh>>,
-        SRes<RenderMeshInstances>,
+        MeshInstanceLookup<'static, 'static>,
         SRes<IndirectParametersBuffers>,
         SRes<PipelineCache>,
         SRes<MeshAllocator>,
@@ -3098,11 +3460,11 @@ impl<P: PhaseItem> RenderCommand<P> for DrawMesh {
         }
 
         let meshes = meshes.into_inner();
-        let mesh_instances = mesh_instances.into_inner();
         let indirect_parameters_buffer = indirect_parameters_buffer.into_inner();
         let mesh_allocator = mesh_allocator.into_inner();
 
-        let Some(mesh_asset_id) = mesh_instances.mesh_asset_id(item.main_entity()) else {
+        let Some(mesh_asset_id) = mesh_instances.mesh_asset_id(item.entity(), item.main_entity())
+        else {
             return RenderCommandResult::Skip;
         };
         let Some(gpu_mesh) = meshes.get(mesh_asset_id) else {
