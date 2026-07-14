@@ -225,7 +225,33 @@ async fn load_gltf<'a, 'b, 'c>(
     load_context: &'b mut LoadContext<'c>,
     settings: &'b GltfLoaderSettings,
 ) -> Result<Gltf, GltfError> {
-    let gltf = gltf::Gltf::from_slice(bytes)?;
+    let gltf = match gltf::Gltf::from_slice(bytes) {
+        Ok(gltf) => gltf,
+        // the gltf crate requires every non-sparse accessor to have a bufferView, but the
+        // spec allows both to be omitted (the accessor is zero-filled, optionally overlaid
+        // with sparse data - blender exports morph targets like this). the accessor readers
+        // already yield zeros in that case, so retry without validation when that is the
+        // only kind of error reported. draco-compressed accessors also lack bufferViews but
+        // their data is not readable, so keep failing for those.
+        Err(gltf::Error::Validation(errors))
+            if errors.iter().all(|(path, error)| {
+                matches!(error, gltf::json::validation::Error::Missing)
+                    && path.0.starts_with("accessors[")
+                    && path.0.ends_with(".bufferView")
+            }) =>
+        {
+            let gltf = gltf::Gltf::from_slice_without_validation(bytes)?;
+            if gltf
+                .document
+                .extensions_used()
+                .any(|ext| ext == "KHR_draco_mesh_compression")
+            {
+                return Err(GltfError::Gltf(gltf::Error::Validation(errors)));
+            }
+            gltf
+        }
+        Err(e) => return Err(e.into()),
+    };
 
     let file_name = load_context
         .asset_path()
