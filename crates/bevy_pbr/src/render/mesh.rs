@@ -66,6 +66,7 @@ use crate::{
     *,
 };
 use bevy_core_pipeline::core_3d::Camera3d;
+use bevy_core_pipeline::dof::{DepthOfField, TRANSPARENT_FOCUS_TEXTURE_FORMAT};
 use bevy_core_pipeline::oit::OrderIndependentTransparencySettings;
 use bevy_core_pipeline::prepass::{DeferredPrepass, DepthPrepass, NormalPrepass};
 use bevy_core_pipeline::tonemapping::{DebandDither, Tonemapping};
@@ -365,6 +366,7 @@ pub fn check_views_need_specialization(
             Has<RenderViewLightProbes<IrradianceVolume>>,
         ),
         Has<OrderIndependentTransparencySettings>,
+        Has<DepthOfField>,
     )>,
     ticks: SystemChangeTick,
 ) {
@@ -382,6 +384,7 @@ pub fn check_views_need_specialization(
         distance_fog,
         (has_environment_maps, has_irradiance_volumes),
         has_oit,
+        has_dof,
     ) in views.iter_mut()
     {
         let mut view_key = MeshPipelineKey::from_msaa_samples(msaa.samples())
@@ -417,6 +420,10 @@ pub fn check_views_need_specialization(
 
         if has_oit {
             view_key |= MeshPipelineKey::OIT_ENABLED;
+        }
+
+        if has_dof {
+            view_key |= MeshPipelineKey::TRANSPARENT_FOCUS;
         }
 
         if let Some(projection) = projection {
@@ -2467,8 +2474,8 @@ bitflags::bitflags! {
         const HAS_PREVIOUS_MORPH                = 1 << 19;
         const OIT_ENABLED                       = 1 << 20;
         const DISTANCE_FOG                      = 1 << 21;
-        const IN_PREPASS                        = 1 << 22;
-        const LAST_FLAG                         = Self::IN_PREPASS.bits();
+        const TRANSPARENT_FOCUS                 = 1 << 22;
+        const LAST_FLAG                         = Self::TRANSPARENT_FOCUS.bits();
 
         // Bitfields
         const MSAA_RESERVED_BITS                = Self::MSAA_MASK_BITS << Self::MSAA_SHIFT_BITS;
@@ -2740,7 +2747,7 @@ impl SpecializedMeshPipeline for MeshPipeline {
         let (label, blend, depth_write_enabled);
         let pass = key.intersection(MeshPipelineKey::BLEND_RESERVED_BITS);
         let (mut is_opaque, mut alpha_to_coverage_enabled) = (false, false);
-        let alpha_depth_write = !key.contains(MeshPipelineKey::IN_PREPASS);
+        let mut is_transparent_pass = false;
         if key.contains(MeshPipelineKey::OIT_ENABLED) && pass == MeshPipelineKey::BLEND_ALPHA {
             label = "oit_mesh_pipeline".into();
             // TODO tail blending would need alpha blending
@@ -2749,12 +2756,14 @@ impl SpecializedMeshPipeline for MeshPipeline {
             // TODO it should be possible to use this to combine MSAA and OIT
             // alpha_to_coverage_enabled = true;
             depth_write_enabled = false;
+            is_transparent_pass = true;
         } else if pass == MeshPipelineKey::BLEND_ALPHA {
             label = "alpha_blend_mesh_pipeline".into();
             blend = Some(BlendState::ALPHA_BLENDING);
             // For the transparent pass, fragments that are closer will be alpha blended
             // but their depth is not written to the depth buffer
-            depth_write_enabled = alpha_depth_write;
+            depth_write_enabled = false;
+            is_transparent_pass = true;
         } else if pass == MeshPipelineKey::BLEND_PREMULTIPLIED_ALPHA {
             label = "premultiplied_alpha_mesh_pipeline".into();
             blend = Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING);
@@ -2762,7 +2771,8 @@ impl SpecializedMeshPipeline for MeshPipeline {
             shader_defs.push("BLEND_PREMULTIPLIED_ALPHA".into());
             // For the transparent pass, fragments that are closer will be alpha blended
             // but their depth is not written to the depth buffer
-            depth_write_enabled = alpha_depth_write;
+            depth_write_enabled = false;
+            is_transparent_pass = true;
         } else if pass == MeshPipelineKey::BLEND_MULTIPLY {
             label = "multiply_mesh_pipeline".into();
             blend = Some(BlendState {
@@ -2777,7 +2787,8 @@ impl SpecializedMeshPipeline for MeshPipeline {
             shader_defs.push("BLEND_MULTIPLY".into());
             // For the multiply pass, fragments that are closer will be alpha blended
             // but their depth is not written to the depth buffer
-            depth_write_enabled = alpha_depth_write;
+            depth_write_enabled = false;
+            is_transparent_pass = true;
         } else if pass == MeshPipelineKey::BLEND_ALPHA_TO_COVERAGE {
             label = "alpha_to_coverage_mesh_pipeline".into();
             // BlendState::REPLACE is not needed here, and None will be potentially much faster in some cases
@@ -2957,6 +2968,33 @@ impl SpecializedMeshPipeline for MeshPipeline {
             TextureFormat::bevy_default()
         };
 
+        // The transparent pass carries an extra render target accumulating
+        // alpha-weighted view depth + coverage for depth of field. Transmissive
+        // items render in their own pass, which doesn't have the attachment.
+        let mut targets = vec![Some(ColorTargetState {
+            format,
+            blend,
+            write_mask: ColorWrites::ALL,
+        })];
+        if is_transparent_pass
+            && key.contains(MeshPipelineKey::TRANSPARENT_FOCUS)
+            && !key.contains(MeshPipelineKey::READS_VIEW_TRANSMISSION_TEXTURE)
+        {
+            shader_defs.push("TRANSPARENT_FOCUS_OUTPUT".into());
+            targets.push(Some(ColorTargetState {
+                format: TRANSPARENT_FOCUS_TEXTURE_FORMAT,
+                blend: Some(BlendState {
+                    color: BlendComponent {
+                        src_factor: BlendFactor::SrcAlpha,
+                        dst_factor: BlendFactor::OneMinusSrcAlpha,
+                        operation: BlendOperation::Add,
+                    },
+                    alpha: BlendComponent::OVER,
+                }),
+                write_mask: ColorWrites::RED | ColorWrites::GREEN,
+            }));
+        }
+
         // This is defined here so that custom shaders that use something other than
         // the mesh binding from bevy_pbr::mesh_bindings can easily make use of this
         // in their own shaders.
@@ -2978,11 +3016,7 @@ impl SpecializedMeshPipeline for MeshPipeline {
                 shader: MESH_SHADER_HANDLE,
                 shader_defs,
                 entry_point: "fragment".into(),
-                targets: vec![Some(ColorTargetState {
-                    format,
-                    blend,
-                    write_mask: ColorWrites::ALL,
-                })],
+                targets,
             }),
             layout: bind_group_layout,
             push_constant_ranges: vec![],

@@ -7,6 +7,7 @@ use crate::{
 use bevy_app::{App, Plugin};
 use bevy_core_pipeline::{
     core_3d::{Transparent3d, CORE_3D_DEPTH_FORMAT},
+    dof::{DepthOfField, TRANSPARENT_FOCUS_TEXTURE_FORMAT},
     oit::OrderIndependentTransparencySettings,
     prepass::{DeferredPrepass, DepthPrepass, MotionVectorPrepass, NormalPrepass},
 };
@@ -97,6 +98,30 @@ struct LineGizmoPipelineKey {
     line_style: GizmoLineStyle,
 }
 
+/// The color targets for pipelines rendering in the [`Transparent3d`] phase.
+///
+/// When the view has depth of field enabled, the transparent pass carries an
+/// extra render target for transparent focus depth; every pipeline in the pass
+/// must declare it, but gizmos don't write to it.
+fn transparent_3d_targets(
+    format: TextureFormat,
+    view_key: MeshPipelineKey,
+) -> Vec<Option<ColorTargetState>> {
+    let mut targets = vec![Some(ColorTargetState {
+        format,
+        blend: Some(BlendState::ALPHA_BLENDING),
+        write_mask: ColorWrites::ALL,
+    })];
+    if view_key.contains(MeshPipelineKey::TRANSPARENT_FOCUS) {
+        targets.push(Some(ColorTargetState {
+            format: TRANSPARENT_FOCUS_TEXTURE_FORMAT,
+            blend: None,
+            write_mask: ColorWrites::empty(),
+        }));
+    }
+    targets
+}
+
 impl SpecializedRenderPipeline for LineGizmoPipeline {
     type Key = LineGizmoPipelineKey;
 
@@ -140,11 +165,7 @@ impl SpecializedRenderPipeline for LineGizmoPipeline {
                 shader: LINE_SHADER_HANDLE,
                 shader_defs,
                 entry_point: fragment_entry_point.into(),
-                targets: vec![Some(ColorTargetState {
-                    format,
-                    blend: Some(BlendState::ALPHA_BLENDING),
-                    write_mask: ColorWrites::ALL,
-                })],
+                targets: transparent_3d_targets(format, key.view_key),
             }),
             layout,
             primitive: PrimitiveState::default(),
@@ -239,11 +260,7 @@ impl SpecializedRenderPipeline for LineJointGizmoPipeline {
                 shader: LINE_JOINT_SHADER_HANDLE,
                 shader_defs,
                 entry_point: "fragment".into(),
-                targets: vec![Some(ColorTargetState {
-                    format,
-                    blend: Some(BlendState::ALPHA_BLENDING),
-                    write_mask: ColorWrites::ALL,
-                })],
+                targets: transparent_3d_targets(format, key.view_key),
             }),
             layout,
             primitive: PrimitiveState::default(),
@@ -303,6 +320,7 @@ fn queue_line_gizmos_3d(
             Has<MotionVectorPrepass>,
             Has<DeferredPrepass>,
             Has<OrderIndependentTransparencySettings>,
+            Has<DepthOfField>,
         ),
     )>,
 ) {
@@ -316,7 +334,7 @@ fn queue_line_gizmos_3d(
         view,
         msaa,
         render_layers,
-        (normal_prepass, depth_prepass, motion_vector_prepass, deferred_prepass, oit),
+        (normal_prepass, depth_prepass, motion_vector_prepass, deferred_prepass, oit, dof),
     ) in &views
     {
         let Some(transparent_phase) = transparent_render_phases.get_mut(&view.retained_view_entity)
@@ -347,6 +365,10 @@ fn queue_line_gizmos_3d(
 
         if oit {
             view_key |= MeshPipelineKey::OIT_ENABLED;
+        }
+
+        if dof {
+            view_key |= MeshPipelineKey::TRANSPARENT_FOCUS;
         }
 
         for (entity, main_entity, config) in &line_gizmos {
@@ -422,6 +444,7 @@ fn queue_line_joint_gizmos_3d(
             Has<DepthPrepass>,
             Has<MotionVectorPrepass>,
             Has<DeferredPrepass>,
+            Has<DepthOfField>,
         ),
     )>,
 ) {
@@ -434,7 +457,7 @@ fn queue_line_joint_gizmos_3d(
         view,
         msaa,
         render_layers,
-        (normal_prepass, depth_prepass, motion_vector_prepass, deferred_prepass),
+        (normal_prepass, depth_prepass, motion_vector_prepass, deferred_prepass, dof),
     ) in &views
     {
         let Some(transparent_phase) = transparent_render_phases.get_mut(&view.retained_view_entity)
@@ -461,6 +484,10 @@ fn queue_line_joint_gizmos_3d(
 
         if deferred_prepass {
             view_key |= MeshPipelineKey::DEFERRED_PREPASS;
+        }
+
+        if dof {
+            view_key |= MeshPipelineKey::TRANSPARENT_FOCUS;
         }
 
         for (entity, main_entity, config) in &line_gizmos {

@@ -31,6 +31,10 @@
 #import bevy_pbr::decal::forward::get_forward_decal_info
 #endif
 
+#ifdef TRANSPARENT_FOCUS_OUTPUT
+#import bevy_pbr::view_transformations
+#endif
+
 @fragment
 fn fragment(
 #ifdef MESHLET_MESH_MATERIAL_PASS
@@ -101,6 +105,15 @@ fn fragment(
 
 #ifdef FORWARD_DECAL
         out.color.a = min(forward_decal_info.alpha, out.color.a);
+#endif
+
+#ifdef TRANSPARENT_FOCUS_OUTPUT
+    out.focus = vec4(
+        -view_transformations::depth_ndc_to_view_z(in.position.z),
+        1.0,
+        0.0,
+        out.color.a,
+    );
 #endif
 
         return out;
