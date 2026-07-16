@@ -16,11 +16,12 @@
 
 use bevy_app::{App, Plugin};
 use bevy_asset::{load_internal_asset, weak_handle, Handle};
+use bevy_color::LinearRgba;
 use bevy_derive::{Deref, DerefMut};
 use bevy_ecs::{
     component::Component,
     entity::Entity,
-    query::{QueryItem, With},
+    query::{QueryItem, With, Without},
     reflect::ReflectComponent,
     resource::Resource,
     schedule::IntoScheduleConfigs as _,
@@ -38,7 +39,8 @@ use bevy_render::{
     },
     render_resource::{
         binding_types::{
-            sampler, texture_2d, texture_depth_2d, texture_depth_2d_multisampled, uniform_buffer,
+            sampler, texture_2d, texture_2d_multisampled, texture_depth_2d,
+            texture_depth_2d_multisampled, uniform_buffer,
         },
         BindGroup, BindGroupEntries, BindGroupLayout, BindGroupLayoutEntries,
         CachedRenderPipelineId, ColorTargetState, ColorWrites, FilterMode, FragmentState, LoadOp,
@@ -50,7 +52,7 @@ use bevy_render::{
     renderer::{RenderContext, RenderDevice},
     sync_component::SyncComponentPlugin,
     sync_world::RenderEntity,
-    texture::{CachedTexture, TextureCache},
+    texture::{CachedTexture, ColorAttachment, TextureCache},
     view::{
         prepare_view_targets, ExtractedView, Msaa, ViewDepthTexture, ViewTarget, ViewUniform,
         ViewUniformOffset, ViewUniforms,
@@ -227,6 +229,7 @@ impl Plugin for DepthOfFieldPlugin {
                 (
                     configure_depth_of_field_view_targets,
                     prepare_auxiliary_depth_of_field_textures,
+                    prepare_transparent_focus_textures,
                 )
                     .after(prepare_view_targets)
                     .in_set(RenderSet::ManageViews),
@@ -307,6 +310,20 @@ struct DepthOfFieldPipelineRenderInfo {
 #[derive(Component, Deref, DerefMut)]
 pub struct AuxiliaryDepthOfFieldTexture(CachedTexture);
 
+/// The format of [`TransparentFocusTexture`].
+pub const TRANSPARENT_FOCUS_TEXTURE_FORMAT: TextureFormat = TextureFormat::Rg16Float;
+
+/// An extra render target attached to the main transparent pass when depth of
+/// field is enabled.
+///
+/// Transparent fragments alpha-blend `(view depth, 1.0)` into it, so it
+/// accumulates the alpha-weighted view depth of transparent surfaces in `r`
+/// and their total coverage in `g`. The depth of field shader combines this
+/// with the opaque depth buffer so that transparent surfaces attract focus in
+/// proportion to their opacity.
+#[derive(Component, Deref, DerefMut)]
+pub struct TransparentFocusTexture(pub ColorAttachment);
+
 /// Bind group layouts for depth of field specific to a single view.
 #[derive(Component, Clone)]
 pub struct ViewDepthOfFieldBindGroupLayouts {
@@ -338,6 +355,7 @@ impl ViewNode for DepthOfFieldNode {
         Read<ViewDepthOfFieldBindGroupLayouts>,
         Read<DynamicUniformIndex<DepthOfFieldUniform>>,
         Option<Read<AuxiliaryDepthOfFieldTexture>>,
+        Option<Read<TransparentFocusTexture>>,
     );
 
     fn run<'w>(
@@ -352,12 +370,20 @@ impl ViewNode for DepthOfFieldNode {
             view_bind_group_layouts,
             depth_of_field_uniform_index,
             auxiliary_dof_texture,
+            transparent_focus_texture,
         ): QueryItem<'w, Self::ViewQuery>,
         world: &'w World,
     ) -> Result<(), NodeRunError> {
         let pipeline_cache = world.resource::<PipelineCache>();
         let view_uniforms = world.resource::<ViewUniforms>();
         let global_bind_group = world.resource::<DepthOfFieldGlobalBindGroup>();
+
+        let Some(transparent_focus_texture) = transparent_focus_texture else {
+            once!(warn!(
+                "Should have created the transparent focus texture by now"
+            ));
+            return Ok(());
+        };
 
         // We can be in either Gaussian blur or bokeh mode here. Both modes are
         // similar, consisting of two passes each. We factor out the information
@@ -396,6 +422,7 @@ impl ViewNode for DepthOfFieldNode {
                         view_depth_texture.view(),
                         postprocess.source,
                         &auxiliary_dof_texture.default_view,
+                        &transparent_focus_texture.texture.default_view,
                     )),
                 )
             } else {
@@ -406,6 +433,7 @@ impl ViewNode for DepthOfFieldNode {
                         view_uniforms_binding,
                         view_depth_texture.view(),
                         postprocess.source,
+                        &transparent_focus_texture.texture.default_view,
                     )),
                 )
             };
@@ -544,6 +572,14 @@ pub fn prepare_depth_of_field_view_bind_group_layouts(
     render_device: Res<RenderDevice>,
 ) {
     for (view, depth_of_field, msaa) in view_targets.iter() {
+        // The transparent focus texture matches the view's sample count and is
+        // only ever read with `textureLoad`.
+        let focus_texture_entry = if *msaa != Msaa::Off {
+            texture_2d_multisampled(TextureSampleType::Float { filterable: false })
+        } else {
+            texture_2d(TextureSampleType::Float { filterable: false })
+        };
+
         // Create the bind group layout for the passes that take one input.
         let single_input = render_device.create_bind_group_layout(
             Some("depth of field bind group layout (single input)"),
@@ -557,6 +593,7 @@ pub fn prepare_depth_of_field_view_bind_group_layouts(
                         texture_depth_2d()
                     },
                     texture_2d(TextureSampleType::Float { filterable: true }),
+                    focus_texture_entry,
                 ),
             ),
         );
@@ -578,6 +615,7 @@ pub fn prepare_depth_of_field_view_bind_group_layouts(
                         },
                         texture_2d(TextureSampleType::Float { filterable: true }),
                         texture_2d(TextureSampleType::Float { filterable: true }),
+                        focus_texture_entry,
                     ),
                 ),
             )),
@@ -662,6 +700,45 @@ pub fn prepare_auxiliary_depth_of_field_textures(
         commands
             .entity(entity)
             .insert(AuxiliaryDepthOfFieldTexture(texture));
+    }
+}
+
+/// Creates the [`TransparentFocusTexture`] for each view with depth of field
+/// enabled, and removes it from views that no longer have depth of field so
+/// the transparent pass attachments stay in sync with the specialized
+/// pipelines.
+pub fn prepare_transparent_focus_textures(
+    mut commands: Commands,
+    render_device: Res<RenderDevice>,
+    mut texture_cache: ResMut<TextureCache>,
+    view_targets: Query<(Entity, &ViewTarget), With<DepthOfField>>,
+    stale: Query<Entity, (With<TransparentFocusTexture>, Without<DepthOfField>)>,
+) {
+    for entity in stale.iter() {
+        commands.entity(entity).remove::<TransparentFocusTexture>();
+    }
+
+    for (entity, view_target) in view_targets.iter() {
+        let texture_descriptor = TextureDescriptor {
+            label: Some("transparent focus texture"),
+            size: view_target.main_texture().size(),
+            mip_level_count: 1,
+            sample_count: view_target.main_texture().sample_count(),
+            dimension: TextureDimension::D2,
+            format: TRANSPARENT_FOCUS_TEXTURE_FORMAT,
+            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        };
+
+        let texture = texture_cache.get(&render_device, texture_descriptor);
+
+        commands
+            .entity(entity)
+            .insert(TransparentFocusTexture(ColorAttachment::new(
+                texture,
+                None,
+                Some(LinearRgba::NONE),
+            )));
     }
 }
 

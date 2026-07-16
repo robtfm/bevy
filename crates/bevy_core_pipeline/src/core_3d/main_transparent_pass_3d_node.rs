@@ -1,4 +1,4 @@
-use crate::core_3d::Transparent3d;
+use crate::{core_3d::Transparent3d, dof::TransparentFocusTexture};
 use bevy_ecs::{prelude::*, query::QueryItem};
 use bevy_render::{
     camera::ExtractedCamera,
@@ -24,12 +24,13 @@ impl ViewNode for MainTransparentPass3dNode {
         &'static ExtractedView,
         &'static ViewTarget,
         &'static ViewDepthTexture,
+        Option<&'static TransparentFocusTexture>,
     );
     fn run(
         &self,
         graph: &mut RenderGraphContext,
         render_context: &mut RenderContext,
-        (camera, view, target, depth): QueryItem<Self::ViewQuery>,
+        (camera, view, target, depth, transparent_focus): QueryItem<Self::ViewQuery>,
         world: &World,
     ) -> Result<(), NodeRunError> {
         let view_entity = graph.view_entity();
@@ -44,7 +45,15 @@ impl ViewNode for MainTransparentPass3dNode {
             return Ok(());
         };
 
-        if !transparent_phase.items.is_empty() {
+        // When depth of field is enabled the pass carries an extra attachment
+        // accumulating transparent focus depth. It must be cleared even when
+        // there is nothing to draw, since depth of field always reads it.
+        let mut color_attachments = vec![Some(target.get_color_attachment())];
+        if let Some(transparent_focus) = transparent_focus {
+            color_attachments.push(Some(transparent_focus.get_attachment()));
+        }
+
+        if !transparent_phase.items.is_empty() || transparent_focus.is_some() {
             // Run the transparent pass, sorted back-to-front
             // NOTE: Scoped to drop the mutable borrow of render_context
             #[cfg(feature = "trace")]
@@ -54,7 +63,7 @@ impl ViewNode for MainTransparentPass3dNode {
 
             let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
                 label: Some("main_transparent_pass_3d"),
-                color_attachments: &[Some(target.get_color_attachment())],
+                color_attachments: &color_attachments,
                 // NOTE: For the transparent pass we load the depth buffer. There should be no
                 // need to write to it, but store is set to `true` as a workaround for issue #3776,
                 // https://github.com/bevyengine/bevy/issues/3776

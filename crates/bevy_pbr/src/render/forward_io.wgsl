@@ -57,4 +57,10 @@ struct VertexOutput {
 
 struct FragmentOutput {
     @location(0) color: vec4<f32>,
+#ifdef TRANSPARENT_FOCUS_OUTPUT
+    // Alpha-weighted view depth (r) and coverage (g), accumulated over the
+    // transparent pass and consumed by depth of field. Written with alpha
+    // blending, so the zero-initialized default is a no-op.
+    @location(1) focus: vec4<f32>,
+#endif
 }
