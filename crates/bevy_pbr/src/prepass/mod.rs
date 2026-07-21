@@ -426,7 +426,7 @@ where
 
     fn specialize(
         &self,
-        key: Self::Key,
+        mut key: Self::Key,
         layout: &MeshVertexBufferLayoutRef,
     ) -> Result<RenderPipelineDescriptor, SpecializedMeshPipelineError> {
         let mut shader_defs = Vec::new();
@@ -437,6 +437,7 @@ where
             .internal
             .specialize(key.mesh_key, shader_defs, layout)?;
 
+        key.mesh_key |= MeshPipelineKey::IN_PREPASS;
         // This is a bit risky because it's possible to change something that would
         // break the prepass but be fine in the main pass.
         // Since this api is pretty low-level it doesn't matter that much, but it is a potential issue.

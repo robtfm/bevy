@@ -89,22 +89,6 @@ struct DualOutput {
 @group(0) @binding(3) var color_texture_b: texture_2d<f32>;
 #endif  // DUAL_INPUT
 
-// The transparent focus texture, accumulated during the main transparent pass:
-// alpha-weighted view depth in r, total coverage in g.
-#ifdef DUAL_INPUT
-#ifdef MULTISAMPLED
-@group(0) @binding(4) var focus_texture: texture_multisampled_2d<f32>;
-#else   // MULTISAMPLED
-@group(0) @binding(4) var focus_texture: texture_2d<f32>;
-#endif  // MULTISAMPLED
-#else   // DUAL_INPUT
-#ifdef MULTISAMPLED
-@group(0) @binding(3) var focus_texture: texture_multisampled_2d<f32>;
-#else   // MULTISAMPLED
-@group(0) @binding(3) var focus_texture: texture_2d<f32>;
-#endif  // MULTISAMPLED
-#endif  // DUAL_INPUT
-
 // The global uniforms, representing data backed by buffers shared among all
 // views in the scene.
 
@@ -134,24 +118,10 @@ fn calculate_circle_of_confusion(in_frag_coord: vec4<f32>) -> f32 {
     let scale = dof_params.coc_scale_factor;
     let max_coc_diameter = dof_params.max_circle_of_confusion_diameter;
 
-    // Sample the depth. Apply max_depth before the coverage-weighted blend
-    // below so that a distant background doesn't swamp the contribution of a
-    // partially-covering transparent surface, and cap at a large finite value
-    // so that a cleared depth of 0.0 (infinitely far away under reverse-z, and
-    // max_depth defaults to infinity) can't produce an infinity that would
-    // poison the blend.
+    // Sample the depth.
     let frag_coord = vec2<i32>(floor(in_frag_coord.xy));
     let raw_depth = textureLoad(depth_texture, frag_coord, 0);
-    let opaque_depth = min(min(-depth_ndc_to_view_z(raw_depth), dof_params.max_depth), 3.4e37);
-
-    // Blend in the view depth of transparent surfaces, weighted by how much
-    // they cover this pixel, so that they attract focus in proportion to
-    // their opacity.
-    let focus_sample = textureLoad(focus_texture, frag_coord, 0);
-    let coverage = clamp(focus_sample.g, 0.0, 1.0);
-    let blended_depth = focus_sample.r + (1.0 - coverage) * opaque_depth;
-
-    let depth = clamp(blended_depth, focus, dof_params.max_depth);
+    let depth = clamp(-depth_ndc_to_view_z(raw_depth), focus, dof_params.max_depth);
 
     // Calculate the circle of confusion.
     //
