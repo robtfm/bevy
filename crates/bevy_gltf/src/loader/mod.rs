@@ -993,6 +993,47 @@ fn load_image<'a, 'b>(
 ) -> Result<ImageOrPath, GltfError> {
     let is_srgb = !linear_textures.contains(&gltf_texture.index());
     let sampler_descriptor = texture_sampler(&gltf_texture);
+
+    // `render_asset_usages` is the caller's `load_materials`. Empty means the materials
+    // these textures feed are retained in neither world, so nothing can ever sample them:
+    // decode is pure cost (CPU on load, and the pixels stay resident for the life of the
+    // asset). Register a 1x1 placeholder under the normal texture label instead, so
+    // material texture handles and the asset dependency graph still resolve — skipping
+    // the label entirely would leave `texture_handle`'s labelled handles dangling.
+    //
+    // Applies to the two sources decoded inline here (buffer views and `data:` URIs).
+    // Textures referencing an external file are left alone: `texture_handle` resolves
+    // those to a path handle rather than the label, so a placeholder under the label
+    // would be ignored while the real file loaded anyway.
+    let skip_texture_data = render_asset_usages.is_empty()
+        && match gltf_texture.source().source() {
+            Source::View { .. } => true,
+            Source::Uri { uri, .. } => DataUri::parse(uri).is_ok(),
+        };
+    if skip_texture_data {
+        let mut image = Image::new_fill(
+            bevy_render::render_resource::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            bevy_render::render_resource::TextureDimension::D2,
+            &[255, 255, 255, 255],
+            if is_srgb {
+                bevy_render::render_resource::TextureFormat::Rgba8UnormSrgb
+            } else {
+                bevy_render::render_resource::TextureFormat::Rgba8Unorm
+            },
+            render_asset_usages,
+        );
+        image.sampler = ImageSampler::Descriptor(sampler_descriptor);
+        image.transfer_priority = transfer_priority;
+        return Ok(ImageOrPath::Image {
+            image,
+            label: GltfAssetLabel::Texture(gltf_texture.index()),
+        });
+    }
+
     #[cfg(all(debug_assertions, feature = "dds"))]
     let name = gltf_texture
         .name()
