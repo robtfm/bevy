@@ -1245,25 +1245,45 @@ pub fn specialize_material_meshes<M: Material>(
                 continue;
             };
             let entity_tick = entity_specialization_ticks.get(visible_entity).unwrap();
-            let last_specialized_tick = view_specialized_material_pipeline_cache
+            // Asset write ticks are a third source of specialization-need:
+            // prepared assets can change render-world-only, with no view or
+            // entity tick to announce it (a fallback material replaced by the
+            // real one, a deferred mesh re-upload landing after we
+            // specialized against the previous version).
+            let asset_written = |write_tick: Option<Tick>, tick: &Tick| {
+                write_tick
+                    .is_some_and(|write_tick| write_tick.is_newer_than(*tick, ticks.this_run()))
+            };
+            let needs_specialization = view_specialized_material_pipeline_cache
                 .get(visible_entity)
-                .map(|(tick, _)| *tick);
-            let needs_specialization = last_specialized_tick.is_none_or(|tick| {
-                view_tick.is_newer_than(tick, ticks.this_run())
-                    || entity_tick.is_newer_than(tick, ticks.this_run())
-            });
+                .is_none_or(|(tick, _)| {
+                    view_tick.is_newer_than(*tick, ticks.this_run())
+                        || entity_tick.is_newer_than(*tick, ticks.this_run())
+                        || asset_written(render_materials.write_tick(material_asset_id), tick)
+                        || asset_written(
+                            render_meshes.write_tick(mesh_instance.mesh_asset_id),
+                            tick,
+                        )
+                });
             if !needs_specialization {
                 continue;
             }
+            // If the pipeline can't be rebuilt now, remove the outdated cache
+            // entry so the entity is skipped at queue rather than paired with
+            // the current material state (the phase may differ, and with it
+            // the pass color targets).
             let Some(mesh) = render_meshes.get(mesh_instance.mesh_asset_id) else {
+                view_specialized_material_pipeline_cache.remove(visible_entity);
                 continue;
             };
             let Some(material) = render_materials.get(material_asset_id) else {
+                view_specialized_material_pipeline_cache.remove(visible_entity);
                 continue;
             };
             let Some(material_bind_group) =
                 material_bind_group_allocator.get(material.binding.group)
             else {
+                view_specialized_material_pipeline_cache.remove(visible_entity);
                 continue;
             };
 
@@ -1315,6 +1335,7 @@ pub fn specialize_material_meshes<M: Material>(
                 Ok(id) => id,
                 Err(err) => {
                     error!("{}", err);
+                    view_specialized_material_pipeline_cache.remove(visible_entity);
                     continue;
                 }
             };

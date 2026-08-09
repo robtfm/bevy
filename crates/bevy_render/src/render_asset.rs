@@ -7,9 +7,10 @@ use bevy_app::{App, Plugin, SubApp};
 use bevy_asset::{Asset, AssetEvent, AssetId, Assets};
 pub use bevy_asset::{RenderAssetTransferPriority, RenderAssetUsages};
 use bevy_ecs::{
+    component::Tick,
     prelude::{Commands, EventReader, IntoScheduleConfigs, ResMut, Resource},
     schedule::SystemSet,
-    system::{StaticSystemParam, SystemParam, SystemParamItem, SystemState},
+    system::{StaticSystemParam, SystemChangeTick, SystemParam, SystemParamItem, SystemState},
     world::{FromWorld, Mut},
 };
 use bevy_platform::collections::{HashMap, HashSet};
@@ -235,12 +236,19 @@ impl<A: RenderAsset> Default for ExtractedAssets<A> {
 
 /// Stores all GPU representations ([`RenderAsset`])
 /// of [`RenderAsset::SourceAsset`] as long as they exist.
+///
+/// Also records the tick at which each asset was last written, so consumers
+/// can notice render-world-only changes (e.g. a fallback asset being replaced
+/// by the real one) via [`RenderAssets::write_tick`].
 #[derive(Resource)]
-pub struct RenderAssets<A: RenderAsset>(HashMap<AssetId<A::SourceAsset>, (A, bool)>);
+pub struct RenderAssets<A: RenderAsset>(
+    HashMap<AssetId<A::SourceAsset>, (A, bool)>,
+    HashMap<AssetId<A::SourceAsset>, Tick>,
+);
 
 impl<A: RenderAsset> Default for RenderAssets<A> {
     fn default() -> Self {
-        Self(Default::default())
+        Self(Default::default(), Default::default())
     }
 }
 
@@ -257,12 +265,26 @@ impl<A: RenderAsset> RenderAssets<A> {
         self.0.get_mut(&id.into()).map(|(asset, _)| asset)
     }
 
-    pub fn insert(&mut self, id: impl Into<AssetId<A::SourceAsset>>, value: A) -> Option<A> {
-        self.0.insert(id.into(), (value, false)).map(|(asset, _)| asset)
+    pub fn insert(
+        &mut self,
+        id: impl Into<AssetId<A::SourceAsset>>,
+        value: A,
+        tick: Tick,
+    ) -> Option<A> {
+        let id = id.into();
+        self.1.insert(id, tick);
+        self.0.insert(id, (value, false)).map(|(asset, _)| asset)
+    }
+
+    /// The tick at which the asset for `id` was last written.
+    pub fn write_tick(&self, id: impl Into<AssetId<A::SourceAsset>>) -> Option<Tick> {
+        self.1.get(&id.into()).copied()
     }
 
     pub fn remove(&mut self, id: impl Into<AssetId<A::SourceAsset>>) -> Option<A> {
-        self.0.remove(&id.into()).map(|(asset, _)| asset)
+        let id = id.into();
+        self.1.remove(&id);
+        self.0.remove(&id).map(|(asset, _)| asset)
     }
 
     pub fn set_stale(&mut self, id: impl Into<AssetId<A::SourceAsset>>) -> Option<&A> {
@@ -421,6 +443,7 @@ pub fn prepare_assets<A: RenderAsset>(
     mut prepare_next_frame: ResMut<PrepareNextFrameAssets<A>>,
     param: StaticSystemParam<<A as RenderAsset>::Param>,
     bpf: Res<RenderAssetBytesPerFrameLimiter>,
+    ticks: SystemChangeTick,
 ) {
     let mut wrote_asset_count = 0;
 
@@ -446,7 +469,7 @@ pub fn prepare_assets<A: RenderAsset>(
         let prev_asset = render_assets.get(id);
         match A::prepare_asset(extracted_asset, id, &mut param, prev_asset) {
             Ok(prepared_asset) => {
-                render_assets.insert(id, prepared_asset);
+                render_assets.insert(id, prepared_asset, ticks.this_run());
                 bpf.write_bytes(maybe_bytes, transfer_priority);
                 wrote_asset_count += 1;
             }
@@ -455,7 +478,7 @@ pub fn prepare_assets<A: RenderAsset>(
                     && let Some(fallback_asset) = A::fallback_asset(&extracted_asset)
                     && let Ok(prepared_fallback) = A::prepare_asset(fallback_asset, id, &mut param, None)
                 {
-                    render_assets.insert(id, prepared_fallback);
+                    render_assets.insert(id, prepared_fallback, ticks.this_run());
                     render_assets.set_stale(id);
                 }
                 prepare_next_frame.assets.push((id, extracted_asset));
@@ -488,7 +511,7 @@ pub fn prepare_assets<A: RenderAsset>(
 
         match A::prepare_asset(extracted_asset, id, &mut param, prev_asset) {
             Ok(prepared_asset) => {
-                render_assets.insert(id, prepared_asset);
+                render_assets.insert(id, prepared_asset, ticks.this_run());
                 bpf.write_bytes(maybe_bytes, transfer_priority);
                 wrote_asset_count += 1;
             }
@@ -497,7 +520,7 @@ pub fn prepare_assets<A: RenderAsset>(
                     && let Some(fallback_asset) = A::fallback_asset(&extracted_asset)
                     && let Ok(prepared_fallback) = A::prepare_asset(fallback_asset, id, &mut param, None)
                 {
-                    render_assets.insert(id, prepared_fallback);
+                    render_assets.insert(id, prepared_fallback, ticks.this_run());
                     render_assets.set_stale(id);
                 }
                 prepare_next_frame.assets.push((id, extracted_asset));
