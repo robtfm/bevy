@@ -2969,17 +2969,15 @@ impl SpecializedMeshPipeline for MeshPipeline {
         };
 
         // The transparent pass carries an extra render target accumulating
-        // alpha-weighted view depth + coverage for depth of field. Transmissive
-        // items render in their own pass, which doesn't have the attachment.
+        // alpha-weighted view depth + coverage for depth of field. Blend-family
+        // materials queue there even when they read the view transmission
+        // texture; transmissive-pass pipelines never set `is_transparent_pass`.
         let mut targets = vec![Some(ColorTargetState {
             format,
             blend,
             write_mask: ColorWrites::ALL,
         })];
-        if is_transparent_pass
-            && key.contains(MeshPipelineKey::TRANSPARENT_FOCUS)
-            && !key.contains(MeshPipelineKey::READS_VIEW_TRANSMISSION_TEXTURE)
-        {
+        if is_transparent_pass && key.contains(MeshPipelineKey::TRANSPARENT_FOCUS) {
             shader_defs.push("TRANSPARENT_FOCUS_OUTPUT".into());
             targets.push(Some(ColorTargetState {
                 format: TRANSPARENT_FOCUS_TEXTURE_FORMAT,
