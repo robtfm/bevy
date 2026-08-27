@@ -176,11 +176,11 @@ pub struct RenderTargetInfo {
 /// Holds internally computed [`Camera`] values.
 #[derive(Default, Debug, Clone)]
 pub struct ComputedCameraValues {
-    clip_from_view: Mat4,
-    target_info: Option<RenderTargetInfo>,
+    pub clip_from_view: Mat4,
+    pub target_info: Option<RenderTargetInfo>,
     // size of the `Viewport`
-    old_viewport_size: Option<UVec2>,
-    old_sub_camera_view: Option<SubCameraView>,
+    pub old_viewport_size: Option<UVec2>,
+    pub old_sub_camera_view: Option<SubCameraView>,
 }
 
 /// How much energy a `Camera3d` absorbs from incoming light.
