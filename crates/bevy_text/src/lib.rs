@@ -125,6 +125,7 @@ impl Plugin for TextPlugin {
                 PostUpdate,
                 (
                     remove_dropped_font_atlas_sets.before(AssetEvents),
+                    remove_dropped_fonts.before(AssetEvents),
                     detect_text_needs_rerender::<Text2d>,
                     update_text2d_layout
                         // Potential conflict: `Assets<Image>`

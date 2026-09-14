@@ -1,11 +1,11 @@
 use alloc::sync::Arc;
 
-use bevy_asset::{AssetId, Assets};
+use bevy_asset::{AssetEvent, AssetId, Assets};
 use bevy_color::Color;
 use bevy_derive::{Deref, DerefMut};
 use bevy_ecs::{
-    component::Component, entity::Entity, reflect::ReflectComponent, resource::Resource,
-    system::ResMut,
+    component::Component, entity::Entity, event::EventReader, reflect::ReflectComponent,
+    resource::Resource, system::ResMut,
 };
 use bevy_image::prelude::*;
 use bevy_log::{once, warn};
@@ -132,7 +132,7 @@ impl TextPipeline {
 
             // Load Bevy fonts into cosmic-text's font system.
             let face_info = load_font_to_fontdb(
-                text_font,
+                text_font.font.id(),
                 font_system,
                 &mut self.map_handle_to_font_id,
                 fonts,
@@ -409,6 +409,49 @@ impl TextPipeline {
     }
 }
 
+/// Evicts the faces of removed [`Font`] assets from the cosmic font system.
+///
+/// Without this, every font ever used stays resident in the font database for the life of the
+/// app and remains a candidate in cosmic-text's glyph fallback scan.
+pub fn remove_dropped_fonts(
+    mut font_events: EventReader<AssetEvent<Font>>,
+    mut pipeline: ResMut<TextPipeline>,
+    mut font_system: ResMut<CosmicFontSystem>,
+    mut swash_cache: ResMut<SwashCache>,
+) {
+    let mut removed = alloc::vec::Vec::new();
+    for event in font_events.read() {
+        if let AssetEvent::Removed { id } = event {
+            if let Some((face_id, _)) = pipeline.map_handle_to_font_id.remove(id) {
+                font_system.db_mut().remove_face(face_id);
+                removed.push(face_id);
+            }
+        }
+    }
+    if removed.is_empty() {
+        return;
+    }
+
+    // `FontSystem` caches loaded fonts and shaping results by face id with no api to drop
+    // individual entries, so rebuild it around the pruned database. This also recomputes its
+    // monospace face lists.
+    let placeholder = cosmic_text::FontSystem::new_with_locale_and_db(
+        alloc::string::String::new(),
+        cosmic_text::fontdb::Database::new(),
+    );
+    let (locale, db) = core::mem::replace(&mut font_system.0, placeholder).into_locale_and_db();
+    font_system.0 = cosmic_text::FontSystem::new_with_locale_and_db(locale, db);
+
+    swash_cache
+        .0
+        .image_cache
+        .retain(|key, _| !removed.contains(&key.font_id));
+    swash_cache
+        .0
+        .outline_command_cache
+        .retain(|key, _| !removed.contains(&key.font_id));
+}
+
 /// Render information for a corresponding text block.
 ///
 /// Contains scaled glyphs and their size. Generated via [`TextPipeline::queue_text`] when an entity has
@@ -453,30 +496,27 @@ impl TextMeasureInfo {
 }
 
 fn load_font_to_fontdb(
-    text_font: &TextFont,
+    font_id: AssetId<Font>,
     font_system: &mut cosmic_text::FontSystem,
     map_handle_to_font_id: &mut HashMap<AssetId<Font>, (cosmic_text::fontdb::ID, Arc<str>)>,
     fonts: &Assets<Font>,
 ) -> FontFaceInfo {
-    let font_handle = text_font.font.clone();
-    let (face_id, family_name) = map_handle_to_font_id
-        .entry(font_handle.id())
-        .or_insert_with(|| {
-            let font = fonts.get(font_handle.id()).expect(
-                "Tried getting a font that was not available, probably due to not being loaded yet",
-            );
-            let data = Arc::clone(&font.data);
-            let ids = font_system
-                .db_mut()
-                .load_font_source(cosmic_text::fontdb::Source::Binary(data));
+    let (face_id, family_name) = map_handle_to_font_id.entry(font_id).or_insert_with(|| {
+        let font = fonts.get(font_id).expect(
+            "Tried getting a font that was not available, probably due to not being loaded yet",
+        );
+        let data = Arc::clone(&font.data);
+        let ids = font_system
+            .db_mut()
+            .load_font_source(cosmic_text::fontdb::Source::Binary(data));
 
-            // TODO: it is assumed this is the right font face
-            let face_id = *ids.last().unwrap();
-            let face = font_system.db().face(face_id).unwrap();
-            let family_name = Arc::from(face.families[0].0.as_str());
+        // TODO: it is assumed this is the right font face
+        let face_id = *ids.last().unwrap();
+        let face = font_system.db().face(face_id).unwrap();
+        let family_name = Arc::from(face.families[0].0.as_str());
 
-            (face_id, family_name)
-        });
+        (face_id, family_name)
+    });
     let face = font_system.db().face(*face_id).unwrap();
 
     FontFaceInfo {
