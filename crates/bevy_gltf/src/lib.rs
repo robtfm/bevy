@@ -119,6 +119,7 @@ pub use {assets::*, label::GltfAssetLabel, loader::*};
 #[derive(Default)]
 pub struct GltfPlugin {
     custom_vertex_attributes: HashMap<Box<str>, MeshVertexAttribute>,
+    uri_resolver: Option<GltfUriResolver>,
 }
 
 impl GltfPlugin {
@@ -133,6 +134,13 @@ impl GltfPlugin {
         attribute: MeshVertexAttribute,
     ) -> Self {
         self.custom_vertex_attributes.insert(name.into(), attribute);
+        self
+    }
+
+    /// Set the resolver used for the relative `uri` references a glTF makes to its images and
+    /// buffers. See [`GltfLoader::uri_resolver`].
+    pub fn with_uri_resolver(mut self, resolver: GltfUriResolver) -> Self {
+        self.uri_resolver = Some(resolver);
         self
     }
 }
@@ -160,6 +168,7 @@ impl Plugin for GltfPlugin {
         app.register_asset_loader(GltfLoader {
             supported_compressed_formats,
             custom_vertex_attributes: self.custom_vertex_attributes.clone(),
+            uri_resolver: self.uri_resolver.clone(),
         });
     }
 }

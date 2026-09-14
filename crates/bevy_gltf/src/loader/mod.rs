@@ -4,6 +4,7 @@ mod gltf_ext;
 use std::{
     io::Error,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 #[cfg(feature = "bevy_animation")]
@@ -135,10 +136,34 @@ pub enum GltfError {
     Io(#[from] Error),
 }
 
+/// Resolves a relative `uri` from within a glTF file against the directory holding that file.
+///
+/// See [`GltfLoader::uri_resolver`].
+pub type GltfUriResolver = Arc<dyn Fn(&Path, &str) -> PathBuf + Send + Sync>;
+
+pub(crate) fn resolve_uri(
+    resolver: Option<&GltfUriResolver>,
+    parent_path: &Path,
+    uri: &str,
+) -> PathBuf {
+    match resolver {
+        Some(resolve) => resolve(parent_path, uri),
+        None => parent_path.join(uri),
+    }
+}
+
 /// Loads glTF files with all of their data as their corresponding bevy representations.
 pub struct GltfLoader {
     /// List of compressed image formats handled by the loader.
     pub supported_compressed_formats: CompressedImageFormats,
+    /// Resolves the relative `uri` references a glTF makes to its images and buffers.
+    ///
+    /// Defaults to [`Path::join`], which leaves any `.`/`..` segments in place for the
+    /// [`AssetReader`](bevy_asset::io::AssetReader) to interpret. Override it when the asset path
+    /// carries a prefix that must not be traversed - an asset source addressing a virtual
+    /// namespace cannot express that through [`Path::join`] alone, since `join` treats every
+    /// leading component as an ordinary directory.
+    pub uri_resolver: Option<GltfUriResolver>,
     /// Custom vertex attributes that will be recognized when loading a glTF file.
     ///
     /// Keys must be the attribute names as found in the glTF data, which must start with an underscore.
@@ -262,7 +287,7 @@ async fn load_gltf<'a, 'b, 'c>(
             "Gltf file name invalid",
         ))))?
         .to_string();
-    let buffer_data = load_buffers(&gltf, load_context).await?;
+    let buffer_data = load_buffers(&gltf, load_context, loader.uri_resolver.as_ref()).await?;
 
     let linear_textures = get_linear_textures(&gltf.document);
 
@@ -549,6 +574,7 @@ async fn load_gltf<'a, 'b, 'c>(
             &buffer_data,
             &linear_textures,
             parent_path,
+            loader.uri_resolver.as_ref(),
             loader.supported_compressed_formats,
             settings.load_materials,
             settings.transfer_priority,
@@ -593,7 +619,13 @@ async fn load_gltf<'a, 'b, 'c>(
     if !settings.load_materials.is_empty() {
         // NOTE: materials must be loaded after textures because image load() calls will happen before load_with_settings, preventing is_srgb from being set properly
         for material in gltf.materials() {
-            let handle = load_material(&material, load_context, &gltf.document, false);
+            let handle = load_material(
+                &material,
+                load_context,
+                &gltf.document,
+                false,
+                loader.uri_resolver.as_ref(),
+            );
             if let Some(name) = material.name() {
                 named_materials.insert(name.into(), handle.clone());
             }
@@ -897,6 +929,7 @@ async fn load_gltf<'a, 'b, 'c>(
                         #[cfg(feature = "bevy_animation")]
                         None,
                         &gltf.document,
+                        loader.uri_resolver.as_ref(),
                     );
                     if result.is_err() {
                         err = Some(result);
@@ -987,6 +1020,7 @@ fn load_image<'a, 'b>(
     buffer_data: &[Vec<u8>],
     linear_textures: &HashSet<usize>,
     parent_path: &'b Path,
+    uri_resolver: Option<&GltfUriResolver>,
     supported_compressed_formats: CompressedImageFormats,
     render_asset_usages: RenderAssetUsages,
     transfer_priority: RenderAssetTransferPriority,
@@ -1266,7 +1300,7 @@ fn load_image<'a, 'b>(
                     label: GltfAssetLabel::Texture(gltf_texture.index()),
                 })
             } else {
-                let image_path = parent_path.join(uri);
+                let image_path = resolve_uri(uri_resolver, parent_path, uri);
                 Ok(ImageOrPath::Path {
                     path: image_path,
                     is_srgb,
@@ -1284,6 +1318,7 @@ fn load_material(
     load_context: &mut LoadContext,
     document: &Document,
     is_scale_inverted: bool,
+    uri_resolver: Option<&GltfUriResolver>,
 ) -> Handle<StandardMaterial> {
     let material_label = material_label(material, is_scale_inverted);
     load_context.labeled_asset_scope(material_label.to_string(), |load_context| {
@@ -1297,7 +1332,7 @@ fn load_material(
             .unwrap_or_default();
         let base_color_texture = pbr
             .base_color_texture()
-            .map(|info| texture_handle(&info.texture(), load_context));
+            .map(|info| texture_handle(&info.texture(), load_context, uri_resolver));
 
         let uv_transform = pbr
             .base_color_texture()
@@ -1311,7 +1346,7 @@ fn load_material(
         let normal_map_texture: Option<Handle<Image>> =
             material.normal_texture().map(|normal_texture| {
                 // TODO: handle normal_texture.scale
-                texture_handle(&normal_texture.texture(), load_context)
+                texture_handle(&normal_texture.texture(), load_context, uri_resolver)
             });
 
         let metallic_roughness_channel = pbr
@@ -1325,7 +1360,7 @@ fn load_material(
                 uv_transform,
                 "metallic/roughness",
             );
-            texture_handle(&info.texture(), load_context)
+            texture_handle(&info.texture(), load_context, uri_resolver)
         });
 
         let occlusion_channel = material
@@ -1334,7 +1369,7 @@ fn load_material(
             .unwrap_or_default();
         let occlusion_texture = material.occlusion_texture().map(|occlusion_texture| {
             // TODO: handle occlusion_texture.strength() (a scalar multiplier for occlusion strength)
-            texture_handle(&occlusion_texture.texture(), load_context)
+            texture_handle(&occlusion_texture.texture(), load_context, uri_resolver)
         });
 
         let emissive = material.emissive_factor();
@@ -1345,7 +1380,7 @@ fn load_material(
         let emissive_texture = material.emissive_texture().map(|info| {
             // TODO: handle occlusion_texture.strength() (a scalar multiplier for occlusion strength)
             warn_on_differing_texture_transforms(material, &info, uv_transform, "emissive");
-            texture_handle(&info.texture(), load_context)
+            texture_handle(&info.texture(), load_context, uri_resolver)
         });
 
         #[cfg(feature = "pbr_transmission_textures")]
@@ -1360,7 +1395,11 @@ fn load_material(
                     let transmission_texture: Option<Handle<Image>> = transmission
                         .transmission_texture()
                         .map(|transmission_texture| {
-                            texture_handle(&transmission_texture.texture(), load_context)
+                            texture_handle(
+                                &transmission_texture.texture(),
+                                load_context,
+                                uri_resolver,
+                            )
                         });
 
                     (
@@ -1391,7 +1430,7 @@ fn load_material(
                     .unwrap_or_default();
                 let thickness_texture: Option<Handle<Image>> =
                     volume.thickness_texture().map(|thickness_texture| {
-                        texture_handle(&thickness_texture.texture(), load_context)
+                        texture_handle(&thickness_texture.texture(), load_context, uri_resolver)
                     });
 
                 (
@@ -1419,16 +1458,16 @@ fn load_material(
         let ior = material.ior().unwrap_or(1.5);
 
         // Parse the `KHR_materials_clearcoat` extension data if necessary.
-        let clearcoat =
-            ClearcoatExtension::parse(load_context, document, material).unwrap_or_default();
+        let clearcoat = ClearcoatExtension::parse(load_context, document, material, uri_resolver)
+            .unwrap_or_default();
 
         // Parse the `KHR_materials_anisotropy` extension data if necessary.
-        let anisotropy =
-            AnisotropyExtension::parse(load_context, document, material).unwrap_or_default();
+        let anisotropy = AnisotropyExtension::parse(load_context, document, material, uri_resolver)
+            .unwrap_or_default();
 
         // Parse the `KHR_materials_specular` extension data if necessary.
-        let specular =
-            SpecularExtension::parse(load_context, document, material).unwrap_or_default();
+        let specular = SpecularExtension::parse(load_context, document, material, uri_resolver)
+            .unwrap_or_default();
 
         // We need to operate in the Linear color space and be willing to exceed 1.0 in our channels
         let base_emissive = LinearRgba::rgb(emissive[0], emissive[1], emissive[2]);
@@ -1539,6 +1578,7 @@ fn load_node(
     #[cfg(feature = "bevy_animation")] animation_roots: &HashSet<usize>,
     #[cfg(feature = "bevy_animation")] mut animation_context: Option<AnimationContext>,
     document: &Document,
+    uri_resolver: Option<&GltfUriResolver>,
 ) -> Result<(), GltfError> {
     let mut gltf_error = None;
     let transform = node_transform(gltf_node);
@@ -1647,7 +1687,13 @@ fn load_node(
                     if !root_load_context.has_labeled_asset(&material_label)
                         && !load_context.has_labeled_asset(&material_label)
                     {
-                        load_material(&material, load_context, document, is_scale_inverted);
+                        load_material(
+                            &material,
+                            load_context,
+                            document,
+                            is_scale_inverted,
+                            uri_resolver,
+                        );
                     }
 
                     let primitive_label = GltfAssetLabel::Primitive {
@@ -1805,6 +1851,7 @@ fn load_node(
                 #[cfg(feature = "bevy_animation")]
                 animation_context.clone(),
                 document,
+                uri_resolver,
             ) {
                 gltf_error = Some(err);
                 return;
@@ -1836,6 +1883,7 @@ fn load_node(
 async fn load_buffers(
     gltf: &gltf::Gltf,
     load_context: &mut LoadContext<'_>,
+    uri_resolver: Option<&GltfUriResolver>,
 ) -> Result<Vec<Vec<u8>>, GltfError> {
     const VALID_MIME_TYPES: &[&str] = &["application/octet-stream", "application/gltf-buffer"];
 
@@ -1854,7 +1902,8 @@ async fn load_buffers(
                     Ok(_) => return Err(GltfError::BufferFormatUnsupported),
                     Err(()) => {
                         // TODO: Remove this and add dep
-                        let buffer_path = load_context.path().parent().unwrap().join(uri);
+                        let parent_path = load_context.path().parent().unwrap();
+                        let buffer_path = resolve_uri(uri_resolver, parent_path, uri);
                         load_context.read_asset_bytes(buffer_path).await?
                     }
                 };

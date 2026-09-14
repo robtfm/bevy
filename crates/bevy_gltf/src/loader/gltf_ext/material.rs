@@ -35,6 +35,7 @@ pub(crate) fn parse_material_extension_texture(
     extension: &Map<String, Value>,
     texture_name: &str,
     texture_kind: &str,
+    uri_resolver: Option<&crate::GltfUriResolver>,
 ) -> (UvChannel, Option<Handle<Image>>) {
     match extension
         .get(texture_name)
@@ -42,7 +43,12 @@ pub(crate) fn parse_material_extension_texture(
     {
         Some(json_info) => (
             uv_channel(material, texture_kind, json_info.tex_coord),
-            Some(texture_handle_from_info(&json_info, document, load_context)),
+            Some(texture_handle_from_info(
+                &json_info,
+                document,
+                load_context,
+                uri_resolver,
+            )),
         ),
         None => (UvChannel::default(), None),
     }

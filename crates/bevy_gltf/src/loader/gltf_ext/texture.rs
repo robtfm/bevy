@@ -14,11 +14,15 @@ use gltf::{
 ))]
 use gltf::{json::texture::Info, Document};
 
-use crate::{loader::DataUri, GltfAssetLabel};
+use crate::{
+    loader::{resolve_uri, DataUri},
+    GltfAssetLabel, GltfUriResolver,
+};
 
 pub(crate) fn texture_handle(
     texture: &Texture<'_>,
     load_context: &mut LoadContext,
+    uri_resolver: Option<&GltfUriResolver>,
 ) -> Handle<Image> {
     match texture.source().source() {
         Source::View { .. } => load_context.get_label_handle(texture_label(texture).to_string()),
@@ -31,7 +35,7 @@ pub(crate) fn texture_handle(
                 load_context.get_label_handle(texture_label(texture).to_string())
             } else {
                 let parent = load_context.path().parent().unwrap();
-                let image_path = parent.join(uri);
+                let image_path = resolve_uri(uri_resolver, parent, uri);
                 load_context.load(image_path)
             }
         }
@@ -117,10 +121,11 @@ pub(crate) fn texture_handle_from_info(
     info: &Info,
     document: &Document,
     load_context: &mut LoadContext,
+    uri_resolver: Option<&GltfUriResolver>,
 ) -> Handle<Image> {
     let texture = document
         .textures()
         .nth(info.index.value())
         .expect("Texture info references a nonexistent texture");
-    texture_handle(&texture, load_context)
+    texture_handle(&texture, load_context, uri_resolver)
 }

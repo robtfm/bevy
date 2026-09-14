@@ -45,6 +45,7 @@ impl SpecularExtension {
         _load_context: &mut LoadContext,
         _document: &Document,
         material: &Material,
+        _uri_resolver: Option<&crate::GltfUriResolver>,
     ) -> Option<Self> {
         let extension = material
             .extensions()?
@@ -59,6 +60,7 @@ impl SpecularExtension {
             extension,
             "specularTexture",
             "specular",
+            _uri_resolver,
         );
 
         #[cfg(feature = "pbr_specular_textures")]
@@ -69,6 +71,7 @@ impl SpecularExtension {
             extension,
             "specularColorTexture",
             "specular color",
+            _uri_resolver,
         );
 
         Some(SpecularExtension {

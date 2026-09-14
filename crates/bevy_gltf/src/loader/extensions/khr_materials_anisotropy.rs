@@ -41,6 +41,7 @@ impl AnisotropyExtension {
         load_context: &mut LoadContext,
         document: &Document,
         material: &Material,
+        uri_resolver: Option<&crate::GltfUriResolver>,
     ) -> Option<AnisotropyExtension> {
         let extension = material
             .extensions()?
@@ -54,7 +55,7 @@ impl AnisotropyExtension {
             .map(|json_info| {
                 (
                     uv_channel(material, "anisotropy", json_info.tex_coord),
-                    texture_handle_from_info(&json_info, document, load_context),
+                    texture_handle_from_info(&json_info, document, load_context, uri_resolver),
                 )
             })
             .unzip();

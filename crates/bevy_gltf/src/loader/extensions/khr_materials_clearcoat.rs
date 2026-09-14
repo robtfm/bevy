@@ -45,6 +45,7 @@ impl ClearcoatExtension {
         load_context: &mut LoadContext,
         document: &Document,
         material: &Material,
+        uri_resolver: Option<&crate::GltfUriResolver>,
     ) -> Option<ClearcoatExtension> {
         let extension = material
             .extensions()?
@@ -59,6 +60,7 @@ impl ClearcoatExtension {
             extension,
             "clearcoatTexture",
             "clearcoat",
+            uri_resolver,
         );
 
         #[cfg(feature = "pbr_multi_layer_material_textures")]
@@ -70,6 +72,7 @@ impl ClearcoatExtension {
                 extension,
                 "clearcoatRoughnessTexture",
                 "clearcoat roughness",
+                uri_resolver,
             );
 
         #[cfg(feature = "pbr_multi_layer_material_textures")]
@@ -80,6 +83,7 @@ impl ClearcoatExtension {
             extension,
             "clearcoatNormalTexture",
             "clearcoat normal",
+            uri_resolver,
         );
 
         Some(ClearcoatExtension {
