@@ -23,6 +23,9 @@ pub struct RenderExtractApp;
 pub struct RenderAppChannels {
     app_to_render_sender: Sender<SubApp>,
     render_to_app_receiver: Receiver<SubApp>,
+    /// Signalled once the render worker's animation-frame task has taken the render app.
+    #[cfg(target_arch = "wasm32")]
+    handoff_taken_receiver: Receiver<()>,
     render_app_in_render_thread: bool,
 }
 
@@ -31,18 +34,26 @@ impl RenderAppChannels {
     pub fn new(
         app_to_render_sender: Sender<SubApp>,
         render_to_app_receiver: Receiver<SubApp>,
+        #[cfg(target_arch = "wasm32")] handoff_taken_receiver: Receiver<()>,
     ) -> Self {
         Self {
             app_to_render_sender,
             render_to_app_receiver,
+            #[cfg(target_arch = "wasm32")]
+            handoff_taken_receiver,
             render_app_in_render_thread: false,
         }
     }
 
     /// Send the `render_app` to the rendering thread.
+    ///
+    /// On the web this also waits until the render worker has picked the app up from inside
+    /// its animation-frame callback, so the app world is paced by the render worker's frames.
     pub fn send_blocking(&mut self, render_app: SubApp) {
         self.app_to_render_sender.send_blocking(render_app).unwrap();
         self.render_app_in_render_thread = true;
+        #[cfg(target_arch = "wasm32")]
+        self.handoff_taken_receiver.recv_blocking().ok();
     }
 
     /// Receive the `render_app` from the rendering thread.
@@ -131,6 +142,8 @@ impl Plugin for PipelinedRenderingPlugin {
 
         let (app_to_render_sender, app_to_render_receiver) = async_channel::bounded::<SubApp>(1);
         let (render_to_app_sender, render_to_app_receiver) = async_channel::bounded::<SubApp>(1);
+        #[cfg(target_arch = "wasm32")]
+        let (handoff_taken_sender, handoff_taken_receiver) = async_channel::bounded::<()>(1);
 
         let mut render_app = app
             .remove_sub_app(RenderApp)
@@ -145,17 +158,28 @@ impl Plugin for PipelinedRenderingPlugin {
         app.insert_resource(RenderAppChannels::new(
             app_to_render_sender,
             render_to_app_receiver,
+            #[cfg(target_arch = "wasm32")]
+            handoff_taken_receiver,
         ));
 
         // On the web the render loop stays on the worker that calls `cleanup` (the one that
         // owns the wgpu device and the OffscreenCanvas). It has to return to the JS event loop
         // after every frame for the browser to present, so it is an async task, not a thread.
+        // Each frame is collected and rendered from inside an animation-frame callback, so the
+        // canvas commits on the display's cadence and the app world (blocked in `send_blocking`
+        // until the handoff is taken) runs one frame ahead of it.
         #[cfg(target_arch = "wasm32")]
         wasm_bindgen_futures::spawn_local(async move {
             loop {
+                if web::animation_frame().await.is_err() {
+                    break;
+                }
                 let Ok(mut render_app) = app_to_render_receiver.recv().await else {
                     break;
                 };
+                if handoff_taken_sender.send(()).await.is_err() {
+                    break;
+                }
                 render_app.update();
                 if render_to_app_sender.send(render_app).await.is_err() {
                     break;
@@ -220,6 +244,24 @@ trait RecvBlocking<T> {
 impl<T> RecvBlocking<T> for Receiver<T> {
     fn recv_blocking(&self) -> Result<T, async_channel::RecvError> {
         futures_lite::future::block_on(self.recv())
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+mod web {
+    use wasm_bindgen::{JsCast, JsValue};
+
+    /// Resolves inside the worker's next animation-frame callback.
+    pub async fn animation_frame() -> Result<(), JsValue> {
+        let promise = js_sys::Promise::new(&mut |resolve, reject| {
+            let scope: web_sys::DedicatedWorkerGlobalScope = js_sys::global().unchecked_into();
+            if let Err(err) = scope.request_animation_frame(&resolve) {
+                reject.call1(&JsValue::UNDEFINED, &err).ok();
+            }
+        });
+        wasm_bindgen_futures::JsFuture::from(promise)
+            .await
+            .map(|_| ())
     }
 }
 

@@ -127,6 +127,13 @@ impl<T: Event> Plugin for WinitPlugin<T> {
             .build()
             .expect("Failed to build event loop");
 
+        // The render worker collects each frame from its own animation-frame callback and the
+        // app is held at the handoff until it does, so the app worker itself runs unpaced.
+        #[cfg(all(target_arch = "wasm32", feature = "web-worker"))]
+        winit::platform::web::set_worker_redraw_strategy(
+            winit::platform::web::WorkerRedrawStrategy::Immediate,
+        );
+
         app.init_non_send_resource::<WinitWindows>()
             .init_resource::<WinitMonitors>()
             .init_resource::<WinitSettings>()
