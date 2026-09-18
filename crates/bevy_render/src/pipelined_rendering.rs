@@ -6,6 +6,7 @@ use bevy_ecs::{
     schedule::MainThreadExecutor,
     world::{Mut, World},
 };
+#[cfg(not(target_arch = "wasm32"))]
 use bevy_tasks::ComputeTaskPool;
 
 use crate::RenderApp;
@@ -146,6 +147,24 @@ impl Plugin for PipelinedRenderingPlugin {
             render_to_app_receiver,
         ));
 
+        // On the web the render loop stays on the worker that calls `cleanup` (the one that
+        // owns the wgpu device and the OffscreenCanvas). It has to return to the JS event loop
+        // after every frame for the browser to present, so it is an async task, not a thread.
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(async move {
+            loop {
+                let Ok(mut render_app) = app_to_render_receiver.recv().await else {
+                    break;
+                };
+                render_app.update();
+                if render_to_app_sender.send(render_app).await.is_err() {
+                    break;
+                }
+            }
+            tracing::debug!("exiting pipelined rendering task");
+        });
+
+        #[cfg(not(target_arch = "wasm32"))]
         std::thread::spawn(move || {
             #[cfg(feature = "trace")]
             let _span = tracing::info_span!("render thread").entered();
@@ -178,6 +197,32 @@ impl Plugin for PipelinedRenderingPlugin {
     }
 }
 
+// `async_channel` only offers its blocking helpers off-wasm; on a web worker parking the
+// thread via `block_on` is fine (it is never the page's main thread).
+#[cfg(target_arch = "wasm32")]
+trait SendBlocking<T> {
+    fn send_blocking(&self, value: T) -> Result<(), async_channel::SendError<T>>;
+}
+
+#[cfg(target_arch = "wasm32")]
+impl<T> SendBlocking<T> for Sender<T> {
+    fn send_blocking(&self, value: T) -> Result<(), async_channel::SendError<T>> {
+        futures_lite::future::block_on(self.send(value))
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+trait RecvBlocking<T> {
+    fn recv_blocking(&self) -> Result<T, async_channel::RecvError>;
+}
+
+#[cfg(target_arch = "wasm32")]
+impl<T> RecvBlocking<T> for Receiver<T> {
+    fn recv_blocking(&self) -> Result<T, async_channel::RecvError> {
+        futures_lite::future::block_on(self.recv())
+    }
+}
+
 // This function waits for the rendering world to be received,
 // runs extract, and then sends the rendering world back to the render thread.
 fn renderer_extract(app_world: &mut World, _world: &mut World) {
@@ -185,13 +230,21 @@ fn renderer_extract(app_world: &mut World, _world: &mut World) {
         world.resource_scope(|world, mut render_channels: Mut<RenderAppChannels>| {
             // we use a scope here to run any main thread tasks that the render world still needs to run
             // while we wait for the render world to be received.
-            if let Some(mut render_app) = ComputeTaskPool::get()
+            #[cfg(not(target_arch = "wasm32"))]
+            let received = ComputeTaskPool::get()
                 .scope_with_executor(true, Some(&*main_thread_executor.0), |s| {
                     s.spawn(async { render_channels.recv().await });
                 })
                 .pop()
-                .unwrap()
-            {
+                .unwrap();
+            // The single-threaded task pool only spins `try_tick`, which cannot wait on another
+            // worker, so park this worker on the channel directly.
+            #[cfg(target_arch = "wasm32")]
+            let received = {
+                let _ = &main_thread_executor;
+                futures_lite::future::block_on(render_channels.recv())
+            };
+            if let Some(mut render_app) = received {
                 render_app.extract(world);
 
                 render_channels.send_blocking(render_app);

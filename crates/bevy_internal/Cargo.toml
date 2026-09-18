@@ -10,7 +10,7 @@ keywords = ["game", "engine", "gamedev", "graphics", "bevy"]
 categories = ["game-engines", "graphics", "gui", "rendering"]
 
 [features]
-web-worker = ["bevy_winit/web-worker"]
+web-worker = ["bevy_winit/web-worker", "bevy_render?/web-worker"]
 trace = [
   "bevy_app/trace",
   "bevy_asset?/trace",

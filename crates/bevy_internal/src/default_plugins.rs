@@ -34,7 +34,10 @@ plugin_group! {
         #[cfg(feature = "bevy_render")]
         bevy_render::texture:::ImagePlugin,
         #[cfg(feature = "bevy_render")]
-        #[custom(cfg(all(not(target_arch = "wasm32"), feature = "multi_threaded")))]
+        #[custom(cfg(any(
+            all(not(target_arch = "wasm32"), feature = "multi_threaded"),
+            all(target_arch = "wasm32", feature = "web-worker")
+        )))]
         bevy_render::pipelined_rendering:::PipelinedRenderingPlugin,
         #[cfg(feature = "bevy_core_pipeline")]
         bevy_core_pipeline:::CorePipelinePlugin,

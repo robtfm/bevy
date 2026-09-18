@@ -94,6 +94,10 @@ pub fn render_system(world: &mut World, state: &mut SystemState<Query<Entity, Wi
                 // https://docs.rs/winit/0.29.9/wasm32-unknown-unknown/winit/window/struct.Window.html#method.pre_present_notify
                 surface_texture.present();
             }
+            // The view is unusable after present. Drop it here, on the render thread, rather
+            // than leaving it for `extract_windows` to drop on the main thread; on the web the
+            // wgpu handles are bound to the worker that created them.
+            window.swap_chain_texture_view = None;
         }
 
         #[cfg(feature = "tracing-tracy")]

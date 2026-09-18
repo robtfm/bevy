@@ -35,9 +35,14 @@ pub mod globals;
 pub mod gpu_component_array_buffer;
 pub mod gpu_readback;
 pub mod mesh;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(
+    not(target_arch = "wasm32"),
+    feature = "web-worker"
+))]
 pub mod pipelined_rendering;
 pub mod primitives;
+#[cfg(all(target_arch = "wasm32", feature = "web-worker"))]
+pub mod web_worker;
 pub mod render_asset;
 pub mod render_graph;
 pub mod render_phase;
@@ -311,6 +316,18 @@ impl Plugin for RenderPlugin {
                 // SAFETY: Plugins should be set up on the main thread.
                 unsafe { initialize_render_app(app) };
             }
+            #[cfg(all(target_arch = "wasm32", feature = "web-worker"))]
+            RenderCreation::WebWorker => {
+                // The handles are created on the render worker and only ever dereferenced
+                // there, in `finish`, which runs there along with `cleanup`.
+                app.insert_resource(FutureRenderResources(web_worker::resources_slot()));
+                app.set_finisher(|app| {
+                    web_worker::init_on_render_worker(app)
+                        .unwrap_or_else(|e| panic!("render worker: {e:?}"))
+                });
+                // SAFETY: Plugins should be set up on the main thread.
+                unsafe { initialize_render_app(app) };
+            }
             RenderCreation::Automatic(render_creation) => {
                 if let Some(backends) = render_creation.backends {
                     let future_render_resources_wrapper = Arc::new(Mutex::new(None));
@@ -472,6 +489,11 @@ impl Plugin for RenderPlugin {
                 .insert_resource(render_adapter.clone());
 
             let render_app = app.sub_app_mut(RenderApp);
+
+            #[cfg(all(target_arch = "wasm32", feature = "web-worker"))]
+            if let Some(surface) = web_worker::take_surface() {
+                render_app.insert_resource(view::window::PrecreatedSurface(Some(surface)));
+            }
 
             render_app
                 .insert_resource(instance)
