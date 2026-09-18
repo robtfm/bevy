@@ -9,6 +9,7 @@ license = "MIT OR Apache-2.0"
 keywords = ["bevy"]
 
 [features]
+web-worker = ["winit/web-worker"]
 default = ["x11"]
 trace = []
 wayland = ["winit/wayland", "winit/wayland-csd-adwaita"]
