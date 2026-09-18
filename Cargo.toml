@@ -123,6 +123,7 @@ unsafe_op_in_unsafe_fn = "warn"
 unused_qualifications = "warn"
 
 [features]
+web-worker = ["bevy_internal/web-worker"]
 default = [
   "std",
   "async_executor",
@@ -4343,3 +4344,6 @@ name = "Extended Bindless Material"
 description = "Demonstrates bindless `ExtendedMaterial`"
 category = "Shaders"
 wasm = false
+
+[patch.crates-io]
+winit = { git = "https://github.com/eordano/winit", rev = "54e1fbb990c1ccd8cf205127381617509979dcb9" }

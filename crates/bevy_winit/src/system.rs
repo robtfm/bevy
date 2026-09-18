@@ -99,7 +99,11 @@ pub fn create_windows<F: QueryFilter + 'static>(
 
         #[cfg(target_arch = "wasm32")]
         {
-            if window.fit_canvas_to_parent {
+            let fit_canvas_to_parent = window.fit_canvas_to_parent;
+            #[cfg(all(feature = "web-worker", target_feature = "atomics"))]
+            let fit_canvas_to_parent =
+                fit_canvas_to_parent && !winit::platform::web::worker_attached();
+            if fit_canvas_to_parent {
                 let canvas = winit_window
                     .canvas()
                     .expect("window.canvas() can only be called in main thread.");

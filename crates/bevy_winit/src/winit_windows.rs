@@ -256,7 +256,11 @@ impl WinitWindows {
             use wasm_bindgen::JsCast;
             use winit::platform::web::WindowAttributesExtWebSys;
 
-            if let Some(selector) = &window.canvas {
+            #[cfg(all(feature = "web-worker", target_feature = "atomics"))]
+            let selector = window.canvas.as_ref().filter(|_| !winit::platform::web::worker_attached());
+            #[cfg(not(all(feature = "web-worker", target_feature = "atomics")))]
+            let selector = window.canvas.as_ref();
+            if let Some(selector) = selector {
                 let window = web_sys::window().unwrap();
                 let document = window.document().unwrap();
                 let canvas = document
@@ -268,6 +272,11 @@ impl WinitWindows {
                 } else {
                     panic!("Cannot find element: {}.", selector);
                 }
+            }
+
+            #[cfg(all(feature = "web-worker", target_feature = "atomics"))]
+            if window.fit_canvas_to_parent && winit::platform::web::worker_attached() {
+                winit_window_attributes.inner_size = None;
             }
 
             winit_window_attributes =
