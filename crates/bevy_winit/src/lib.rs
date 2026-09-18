@@ -12,6 +12,9 @@
 //! The app's [runner](bevy_app::App::runner) is set by `WinitPlugin` and handles the `winit` [`EventLoop`].
 //! See `winit_runner` for details.
 
+#[cfg(all(target_arch = "wasm32", feature = "web-worker", not(target_feature = "atomics")))]
+compile_error!("the `web-worker` feature needs the `atomics` target feature (shared memory)");
+
 extern crate alloc;
 
 use bevy_derive::Deref;
