@@ -22,7 +22,7 @@ use bevy_render::{
     primitives::{Aabb, Frustum},
     render_asset::RenderAssets,
     render_resource::{DynamicUniformBuffer, Sampler, Shader, ShaderType, TextureView},
-    renderer::{RenderAdapter, RenderDevice, RenderQueue},
+    renderer::{RenderAdapter, RenderCapabilities, RenderDevice, RenderQueue},
     settings::WgpuFeatures,
     sync_world::RenderEntity,
     texture::{FallbackImage, GpuImage},
@@ -792,12 +792,19 @@ pub(crate) fn binding_arrays_are_usable(
     render_device: &RenderDevice,
     render_adapter: &RenderAdapter,
 ) -> bool {
+    binding_arrays_are_usable_with(&RenderCapabilities::new(render_device, render_adapter))
+}
+
+/// [`binding_arrays_are_usable`] from captured [`RenderCapabilities`], for use where no device
+/// handle is available (the main world).
+pub(crate) fn binding_arrays_are_usable_with(capabilities: &RenderCapabilities) -> bool {
     !cfg!(feature = "shader_format_glsl")
-        && bevy_render::get_adreno_model(render_adapter).is_none_or(|model| model > 610)
-        && render_device.limits().max_storage_textures_per_shader_stage
+        && bevy_render::get_adreno_model_from_name(&capabilities.adapter_info().name)
+            .is_none_or(|model| model > 610)
+        && capabilities.limits().max_storage_textures_per_shader_stage
             >= (STANDARD_MATERIAL_FRAGMENT_SHADER_MIN_TEXTURE_BINDINGS + MAX_VIEW_LIGHT_PROBES)
                 as u32
-        && render_device.features().contains(
+        && capabilities.features().contains(
             WgpuFeatures::TEXTURE_BINDING_ARRAY
                 | WgpuFeatures::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING,
         )

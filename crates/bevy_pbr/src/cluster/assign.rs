@@ -13,7 +13,7 @@ use bevy_render::{
     camera::Camera,
     primitives::{Aabb, Frustum, HalfSpace, Sphere},
     render_resource::BufferBindingType,
-    renderer::{RenderAdapter, RenderDevice},
+    renderer::RenderCapabilities,
     view::{RenderLayers, ViewVisibility},
 };
 use bevy_transform::components::GlobalTransform;
@@ -180,9 +180,9 @@ pub(crate) fn assign_objects_to_clusters(
     mut clusterable_objects: Local<Vec<ClusterableObjectAssignmentData>>,
     mut cluster_aabb_spheres: Local<Vec<Option<Sphere>>>,
     mut max_clusterable_objects_warning_emitted: Local<bool>,
-    (render_device, render_adapter): (Option<Res<RenderDevice>>, Option<Res<RenderAdapter>>),
+    capabilities: Option<Res<RenderCapabilities>>,
 ) {
-    let (Some(render_device), Some(render_adapter)) = (render_device, render_adapter) else {
+    let Some(capabilities) = capabilities else {
         return;
     };
 
@@ -230,7 +230,7 @@ pub(crate) fn assign_objects_to_clusters(
     );
 
     let clustered_forward_buffer_binding_type =
-        render_device.get_supported_read_only_binding_type(CLUSTERED_FORWARD_STORAGE_BUFFER_COUNT);
+        capabilities.get_supported_read_only_binding_type(CLUSTERED_FORWARD_STORAGE_BUFFER_COUNT);
     let supports_storage_buffers = matches!(
         clustered_forward_buffer_binding_type,
         BufferBindingType::Storage { .. }
@@ -259,7 +259,7 @@ pub(crate) fn assign_objects_to_clusters(
     }
 
     // Add decals if the current platform supports them.
-    if decal::clustered::clustered_decals_are_usable(&render_device, &render_adapter) {
+    if decal::clustered::clustered_decals_are_usable_with(&capabilities) {
         clusterable_objects.extend(decals_query.iter().map(|(entity, transform)| {
             ClusterableObjectAssignmentData {
                 entity,

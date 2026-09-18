@@ -182,6 +182,100 @@ pub struct RenderInstance(pub Arc<WgpuWrapper<Instance>>);
 #[derive(Resource, Clone, Deref, DerefMut)]
 pub struct RenderAdapterInfo(pub WgpuWrapper<AdapterInfo>);
 
+/// What the renderer can do: the device's limits and features and the adapter's info. Present in
+/// the main world so capability checks there never need a device handle.
+///
+/// Normally this wraps (and derefs to) the [`RenderDevice`]. When the render world runs on its
+/// own web worker (`web-worker` feature) the wgpu handles cannot be touched from the main world,
+/// so it holds a snapshot of the data instead.
+#[cfg(not(all(target_arch = "wasm32", feature = "web-worker")))]
+#[derive(Resource, Clone, Deref)]
+pub struct RenderCapabilities {
+    #[deref]
+    device: RenderDevice,
+    adapter_info: AdapterInfo,
+}
+
+/// What the renderer can do: the device's limits and features and the adapter's info. Present in
+/// the main world so capability checks there never need a device handle.
+///
+/// Normally this wraps (and derefs to) the [`RenderDevice`]. When the render world runs on its
+/// own web worker (`web-worker` feature) the wgpu handles cannot be touched from the main world,
+/// so it holds a snapshot of the data instead.
+#[cfg(all(target_arch = "wasm32", feature = "web-worker"))]
+#[derive(Resource, Clone)]
+pub struct RenderCapabilities {
+    limits: wgpu::Limits,
+    features: wgpu::Features,
+    adapter_info: AdapterInfo,
+}
+
+impl RenderCapabilities {
+    /// Captures the capabilities of `device` and `adapter`. Must be called on the thread that
+    /// created them.
+    pub fn new(device: &RenderDevice, adapter: &RenderAdapter) -> Self {
+        #[cfg(not(all(target_arch = "wasm32", feature = "web-worker")))]
+        {
+            Self {
+                device: device.clone(),
+                adapter_info: adapter.get_info(),
+            }
+        }
+        #[cfg(all(target_arch = "wasm32", feature = "web-worker"))]
+        {
+            Self {
+                limits: device.limits(),
+                features: device.features(),
+                adapter_info: adapter.get_info(),
+            }
+        }
+    }
+
+    /// See [`RenderDevice::limits`].
+    #[inline]
+    pub fn limits(&self) -> wgpu::Limits {
+        #[cfg(not(all(target_arch = "wasm32", feature = "web-worker")))]
+        {
+            self.device.limits()
+        }
+        #[cfg(all(target_arch = "wasm32", feature = "web-worker"))]
+        {
+            self.limits.clone()
+        }
+    }
+
+    /// See [`RenderDevice::features`].
+    #[inline]
+    pub fn features(&self) -> wgpu::Features {
+        #[cfg(not(all(target_arch = "wasm32", feature = "web-worker")))]
+        {
+            self.device.features()
+        }
+        #[cfg(all(target_arch = "wasm32", feature = "web-worker"))]
+        {
+            self.features
+        }
+    }
+
+    /// The [`AdapterInfo`] of the adapter in use by the renderer.
+    #[inline]
+    pub fn adapter_info(&self) -> &AdapterInfo {
+        &self.adapter_info
+    }
+
+    /// See [`RenderDevice::get_supported_read_only_binding_type`].
+    pub fn get_supported_read_only_binding_type(
+        &self,
+        buffers_per_shader_stage: u32,
+    ) -> wgpu::BufferBindingType {
+        if self.limits().max_storage_buffers_per_shader_stage >= buffers_per_shader_stage {
+            wgpu::BufferBindingType::Storage { read_only: true }
+        } else {
+            wgpu::BufferBindingType::Uniform
+        }
+    }
+}
+
 const GPU_NOT_FOUND_ERROR_MESSAGE: &str = if cfg!(target_os = "linux") {
     "Unable to find a GPU! Make sure you have installed required drivers! For extra information, see: https://github.com/bevyengine/bevy/blob/latest/docs/linux_dependencies.md"
 } else {

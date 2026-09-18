@@ -103,7 +103,7 @@ use bevy_app::prelude::*;
 use bevy_asset::AssetApp;
 use bevy_image::CompressedImageFormats;
 use bevy_mesh::MeshVertexAttribute;
-use bevy_render::renderer::RenderDevice;
+use bevy_render::renderer::RenderCapabilities;
 
 /// The glTF prelude.
 ///
@@ -161,8 +161,8 @@ impl Plugin for GltfPlugin {
     }
 
     fn finish(&self, app: &mut App) {
-        let supported_compressed_formats = match app.world().get_resource::<RenderDevice>() {
-            Some(render_device) => CompressedImageFormats::from_features(render_device.features()),
+        let supported_compressed_formats = match app.world().get_resource::<RenderCapabilities>() {
+            Some(capabilities) => CompressedImageFormats::from_features(capabilities.features()),
             None => CompressedImageFormats::NONE,
         };
         app.register_asset_loader(GltfLoader {

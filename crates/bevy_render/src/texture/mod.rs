@@ -15,7 +15,9 @@ pub use texture_attachment::*;
 pub use texture_cache::*;
 
 use crate::{
-    render_asset::RenderAssetPlugin, renderer::RenderDevice, Render, RenderApp, RenderSet,
+    render_asset::RenderAssetPlugin,
+    renderer::{RenderCapabilities, RenderDevice},
+    Render, RenderApp, RenderSet,
 };
 use bevy_app::{App, Plugin};
 use bevy_asset::{weak_handle, AssetApp, Assets, Handle};
@@ -111,12 +113,13 @@ impl Plugin for ImagePlugin {
 
     fn finish(&self, app: &mut App) {
         if !ImageLoader::SUPPORTED_FORMATS.is_empty() {
-            let supported_compressed_formats = match app.world().get_resource::<RenderDevice>() {
-                Some(render_device) => {
-                    CompressedImageFormats::from_features(render_device.features())
-                }
-                None => CompressedImageFormats::NONE,
-            };
+            let supported_compressed_formats =
+                match app.world().get_resource::<RenderCapabilities>() {
+                    Some(capabilities) => {
+                        CompressedImageFormats::from_features(capabilities.features())
+                    }
+                    None => CompressedImageFormats::NONE,
+                };
             app.register_asset_loader(ImageLoader::new(supported_compressed_formats));
         }
 

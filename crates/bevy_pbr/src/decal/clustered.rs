@@ -39,7 +39,7 @@ use bevy_render::{
         binding_types, BindGroupLayoutEntryBuilder, Buffer, BufferUsages, RawBufferVec, Sampler,
         SamplerBindingType, Shader, ShaderType, TextureSampleType, TextureView,
     },
-    renderer::{RenderAdapter, RenderDevice, RenderQueue},
+    renderer::{RenderAdapter, RenderCapabilities, RenderDevice, RenderQueue},
     sync_world::RenderEntity,
     texture::{FallbackImage, GpuImage},
     view::{self, ViewVisibility, Visibility, VisibilityClass},
@@ -49,7 +49,7 @@ use bevy_transform::{components::GlobalTransform, prelude::Transform};
 use bytemuck::{Pod, Zeroable};
 
 use crate::{
-    binding_arrays_are_usable, prepare_lights, DirectionalLight, GlobalClusterableObjectMeta,
+    binding_arrays_are_usable_with, prepare_lights, DirectionalLight, GlobalClusterableObjectMeta,
     LightVisibilityClass, PointLight, SpotLight,
 };
 
@@ -531,10 +531,16 @@ pub fn clustered_decals_are_usable(
     render_device: &RenderDevice,
     render_adapter: &RenderAdapter,
 ) -> bool {
+    clustered_decals_are_usable_with(&RenderCapabilities::new(render_device, render_adapter))
+}
+
+/// [`clustered_decals_are_usable`] from captured [`RenderCapabilities`], for use where no device
+/// handle is available (the main world).
+pub fn clustered_decals_are_usable_with(capabilities: &RenderCapabilities) -> bool {
     // Disable binding arrays on Metal. There aren't enough texture bindings available.
     // See issue #17553.
     // Re-enable this when `wgpu` has first-class bindless.
-    binding_arrays_are_usable(render_device, render_adapter)
+    binding_arrays_are_usable_with(capabilities)
         && cfg!(not(any(target_os = "macos", target_os = "ios")))
         && cfg!(feature = "pbr_clustered_decals")
 }

@@ -102,7 +102,7 @@ use crate::{
     mesh::{MeshPlugin, MorphPlugin, RenderMesh},
     render_asset::prepare_assets,
     render_resource::{PipelineCache, Shader, ShaderLoader},
-    renderer::{render_system, RenderInstance, WgpuWrapper},
+    renderer::{render_system, RenderCapabilities, RenderInstance, WgpuWrapper},
     settings::RenderCreation,
     storage::StoragePlugin,
     view::{ViewPlugin, WindowRenderPlugin},
@@ -483,6 +483,10 @@ impl Plugin for RenderPlugin {
             let RenderResources(device, queue, adapter_info, render_adapter, instance) =
                 future_render_resources.0.lock().unwrap().take().unwrap();
 
+            app.insert_resource(RenderCapabilities::new(&device, &render_adapter));
+            // With the render world on its own web worker the handles must stay off the main
+            // world entirely: any use of them there, including dropping, is a cross-thread access.
+            #[cfg(not(all(target_arch = "wasm32", feature = "web-worker")))]
             app.insert_resource(device.clone())
                 .insert_resource(queue.clone())
                 .insert_resource(adapter_info.clone())
@@ -599,11 +603,15 @@ fn apply_extract_commands(render_world: &mut World) {
 ///
 /// This lets us work around hardware bugs.
 pub fn get_adreno_model(adapter: &RenderAdapter) -> Option<u32> {
+    get_adreno_model_from_name(&adapter.get_info().name)
+}
+
+/// [`get_adreno_model`] for an adapter name taken from [`AdapterInfo`](wgpu::AdapterInfo).
+pub fn get_adreno_model_from_name(adapter_name: &str) -> Option<u32> {
     if !cfg!(target_os = "android") {
         return None;
     }
 
-    let adapter_name = adapter.get_info().name;
     let adreno_model = adapter_name.strip_prefix("Adreno (TM) ")?;
 
     // Take suffixes into account (like Adreno 642L).

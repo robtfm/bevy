@@ -11,7 +11,8 @@ use bevy_render::{
     batching::NoAutomaticBatching,
     mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes},
     render_resource::BufferUsages,
-    renderer::{RenderDevice, RenderQueue},
+    renderer::{RenderCapabilities, RenderDevice, RenderQueue},
+    settings::WgpuLimits,
     view::ViewVisibility,
     Extract,
 };
@@ -191,9 +192,14 @@ impl SkinUniformInfo {
 /// Returns true if skinning must use uniforms (and dynamic offsets) because
 /// storage buffers aren't supported on the current platform.
 pub fn skins_use_uniform_buffers(render_device: &RenderDevice) -> bool {
+    skins_use_uniform_buffers_with(&render_device.limits())
+}
+
+/// [`skins_use_uniform_buffers`] from the device limits, for use where no device handle is
+/// available (the main world).
+pub fn skins_use_uniform_buffers_with(limits: &WgpuLimits) -> bool {
     static SKINS_USE_UNIFORM_BUFFERS: OnceLock<bool> = OnceLock::new();
-    *SKINS_USE_UNIFORM_BUFFERS
-        .get_or_init(|| render_device.limits().max_storage_buffers_per_shader_stage == 0)
+    *SKINS_USE_UNIFORM_BUFFERS.get_or_init(|| limits.max_storage_buffers_per_shader_stage == 0)
 }
 
 /// Uploads the buffers containing the joints to the GPU.
@@ -615,14 +621,12 @@ fn remove_skin(skin_uniforms: &mut SkinUniforms, skinned_mesh_entity: MainEntity
 pub fn no_automatic_skin_batching(
     mut commands: Commands,
     query: Query<Entity, (With<SkinnedMesh>, Without<NoAutomaticBatching>)>,
-    render_device: Option<Res<RenderDevice>>,
+    capabilities: Option<Res<RenderCapabilities>>,
 ) {
-    // The main world may not hold a device handle (e.g. when rendering runs on another web
-    // worker); without one there is no uniform-buffer fallback to worry about.
-    let Some(render_device) = render_device else {
+    let Some(capabilities) = capabilities else {
         return;
     };
-    if !skins_use_uniform_buffers(&render_device) {
+    if !skins_use_uniform_buffers_with(&capabilities.limits()) {
         return;
     }
 
