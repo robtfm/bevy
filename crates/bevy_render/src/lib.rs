@@ -566,7 +566,11 @@ unsafe fn initialize_render_app(app: &mut App) {
                 (PipelineCache::process_pipeline_queue_system, render_system)
                     .chain()
                     .in_set(RenderSet::Render),
-                despawn_temporary_render_entities.in_set(RenderSet::PostCleanup),
+                (
+                    despawn_temporary_render_entities,
+                    renderer::drop_parked_wgpu_values,
+                )
+                    .in_set(RenderSet::PostCleanup),
             ),
         );
 
