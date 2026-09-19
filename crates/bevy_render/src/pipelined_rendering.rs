@@ -170,17 +170,68 @@ impl Plugin for PipelinedRenderingPlugin {
         // until the handoff is taken) runs one frame ahead of it.
         #[cfg(target_arch = "wasm32")]
         wasm_bindgen_futures::spawn_local(async move {
+            // Submitted frames the GPU may still be working on. One idles the GPU between a
+            // completion and the next animation frame; each extra frame adds a refresh of
+            // latency for a smaller throughput gain.
+            const FRAMES_IN_FLIGHT: usize = 2;
+            // 4-byte mappable buffers used as GPU fences, one per frame in flight: mapping is
+            // queued behind everything submitted before it, and wgpu's WebGPU backend has no
+            // `on_submitted_work_done`.
+            let mut fences: Vec<crate::render_resource::Buffer> = Vec::new();
+            let mut in_flight: std::collections::VecDeque<(usize, async_channel::Receiver<()>)> =
+                std::collections::VecDeque::new();
+            let mut frame: usize = 0;
             loop {
-                if web::animation_frame().await.is_err() {
-                    break;
-                }
+                // Take the handoff first, then render inside the next animation-frame callback:
+                // frames committed outside the callback are not paced by the compositor, and
+                // when two land in one refresh the earlier one is dropped.
                 let Ok(mut render_app) = app_to_render_receiver.recv().await else {
                     break;
                 };
+                // A worker's animation frames are not throttled by GPU backlog the way a page's
+                // are, so bound the backlog here before waiting for the next frame.
+                while in_flight.len() >= FRAMES_IN_FLIGHT {
+                    let (index, done) = in_flight.pop_front().unwrap();
+                    done.recv().await.ok();
+                    fences[index].unmap();
+                }
+                if web::animation_frame().await.is_err() {
+                    break;
+                }
                 if handoff_taken_sender.send(()).await.is_err() {
                     break;
                 }
                 render_app.update();
+                if fences.is_empty() {
+                    if let Some(device) = render_app
+                        .world()
+                        .get_resource::<crate::renderer::RenderDevice>()
+                    {
+                        fences = (0..FRAMES_IN_FLIGHT)
+                            .map(|_| {
+                                device.create_buffer(&wgpu::BufferDescriptor {
+                                    label: Some("pipelined rendering frame fence"),
+                                    size: 4,
+                                    usage: wgpu::BufferUsages::MAP_READ
+                                        | wgpu::BufferUsages::COPY_DST,
+                                    mapped_at_creation: false,
+                                })
+                            })
+                            .collect();
+                    }
+                }
+                if !fences.is_empty() {
+                    let index = frame % FRAMES_IN_FLIGHT;
+                    let (sender, receiver) = async_channel::bounded(1);
+                    wgpu::Buffer::slice(&fences[index], ..).map_async(
+                        wgpu::MapMode::Read,
+                        move |_| {
+                            sender.try_send(()).ok();
+                        },
+                    );
+                    in_flight.push_back((index, receiver));
+                    frame += 1;
+                }
                 if render_to_app_sender.send(render_app).await.is_err() {
                     break;
                 }
