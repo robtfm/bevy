@@ -10,7 +10,10 @@ use crate::{
     world::{unsafe_world_cell::UnsafeWorldCell, World, WorldId},
 };
 
-#[cfg(all(not(target_arch = "wasm32"), feature = "multi_threaded"))]
+#[cfg(all(
+    feature = "multi_threaded",
+    any(not(target_arch = "wasm32"), feature = "web-worker")
+))]
 use crate::entity::UniqueEntityEquivalentSlice;
 
 use alloc::vec::Vec;
@@ -1487,7 +1490,10 @@ impl<D: QueryData, F: QueryFilter> QueryState<D, F> {
     /// with a mismatched [`WorldId`] is unsound.
     ///
     /// [`ComputeTaskPool`]: bevy_tasks::ComputeTaskPool
-    #[cfg(all(not(target_arch = "wasm32"), feature = "multi_threaded"))]
+    #[cfg(all(
+        feature = "multi_threaded",
+        any(not(target_arch = "wasm32"), feature = "web-worker")
+    ))]
     pub(crate) unsafe fn par_fold_init_unchecked_manual<'w, T, FN, INIT>(
         &self,
         init_accum: INIT,
@@ -1601,7 +1607,10 @@ impl<D: QueryData, F: QueryFilter> QueryState<D, F> {
     /// with a mismatched [`WorldId`] is unsound.
     ///
     /// [`ComputeTaskPool`]: bevy_tasks::ComputeTaskPool
-    #[cfg(all(not(target_arch = "wasm32"), feature = "multi_threaded"))]
+    #[cfg(all(
+        feature = "multi_threaded",
+        any(not(target_arch = "wasm32"), feature = "web-worker")
+    ))]
     pub(crate) unsafe fn par_many_unique_fold_init_unchecked_manual<'w, T, FN, INIT, E>(
         &self,
         init_accum: INIT,
@@ -1664,7 +1673,10 @@ impl<D: ReadOnlyQueryData, F: QueryFilter> QueryState<D, F> {
     /// with a mismatched [`WorldId`] is unsound.
     ///
     /// [`ComputeTaskPool`]: bevy_tasks::ComputeTaskPool
-    #[cfg(all(not(target_arch = "wasm32"), feature = "multi_threaded"))]
+    #[cfg(all(
+        feature = "multi_threaded",
+        any(not(target_arch = "wasm32"), feature = "web-worker")
+    ))]
     pub(crate) unsafe fn par_many_fold_init_unchecked_manual<'w, T, FN, INIT, E>(
         &self,
         init_accum: INIT,

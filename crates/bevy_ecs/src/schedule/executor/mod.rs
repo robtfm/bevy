@@ -41,7 +41,7 @@ pub(super) trait SystemExecutor: Send + Sync {
 /// Specifies how a [`Schedule`](super::Schedule) will be run.
 ///
 /// The default depends on the target platform:
-///  - [`SingleThreaded`](ExecutorKind::SingleThreaded) on Wasm.
+///  - [`SingleThreaded`](ExecutorKind::SingleThreaded) on Wasm without the `web-worker` feature.
 ///  - [`MultiThreaded`](ExecutorKind::MultiThreaded) everywhere else.
 #[derive(PartialEq, Eq, Default, Debug, Copy, Clone)]
 pub enum ExecutorKind {
@@ -49,14 +49,26 @@ pub enum ExecutorKind {
     ///
     /// Useful if you're dealing with a single-threaded environment, saving your threads for
     /// other things, or just trying minimize overhead.
-    #[cfg_attr(any(target_arch = "wasm32", not(feature = "multi_threaded")), default)]
+    #[cfg_attr(
+        not(all(
+            feature = "multi_threaded",
+            any(not(target_arch = "wasm32"), feature = "web-worker")
+        )),
+        default
+    )]
     SingleThreaded,
     /// Like [`SingleThreaded`](ExecutorKind::SingleThreaded) but calls [`apply_deferred`](crate::system::System::apply_deferred)
     /// immediately after running each system.
     Simple,
     /// Runs the schedule using a thread pool. Non-conflicting systems can run in parallel.
     #[cfg(feature = "std")]
-    #[cfg_attr(all(not(target_arch = "wasm32"), feature = "multi_threaded"), default)]
+    #[cfg_attr(
+        all(
+            feature = "multi_threaded",
+            any(not(target_arch = "wasm32"), feature = "web-worker")
+        ),
+        default
+    )]
     MultiThreaded,
 }
 

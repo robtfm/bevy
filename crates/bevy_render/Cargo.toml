@@ -32,7 +32,7 @@ multi_threaded = ["bevy_tasks/multi_threaded"]
 
 # Run the render world on a web worker separate from the app world (requires the
 # `atomics` target feature). Pairs with `bevy_winit/web-worker`.
-web-worker = []
+web-worker = ["bevy_ecs/web-worker"]
 
 shader_format_glsl = ["naga/glsl-in", "naga/wgsl-out", "naga_oil/glsl"]
 shader_format_spirv = ["wgpu/spirv", "naga/spv-in", "naga/spv-out"]

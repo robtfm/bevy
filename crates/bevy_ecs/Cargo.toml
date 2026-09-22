@@ -19,6 +19,10 @@ default = ["std", "bevy_reflect", "async_executor", "backtrace"]
 ## multiple threads whenever possible.
 multi_threaded = ["bevy_tasks/multi_threaded", "dep:arrayvec"]
 
+## The app runs on a web worker over shared memory: the multi-threaded executor and
+## parallel iteration are used there as on native.
+web-worker = ["bevy_tasks/web-worker"]
+
 ## Adds serialization support through `serde`.
 serialize = [
   "dep:serde",

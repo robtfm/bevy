@@ -83,7 +83,10 @@ impl<'w, 's, D: QueryData, F: QueryFilter> QueryParIter<'w, 's, D, F> {
             func(&mut init, item);
             init
         };
-        #[cfg(any(target_arch = "wasm32", not(feature = "multi_threaded")))]
+        #[cfg(not(all(
+            feature = "multi_threaded",
+            any(not(target_arch = "wasm32"), feature = "web-worker")
+        )))]
         {
             let init = init();
             // SAFETY:
@@ -99,7 +102,10 @@ impl<'w, 's, D: QueryData, F: QueryFilter> QueryParIter<'w, 's, D, F> {
                     .fold(init, func);
             }
         }
-        #[cfg(all(not(target_arch = "wasm32"), feature = "multi_threaded"))]
+        #[cfg(all(
+            feature = "multi_threaded",
+            any(not(target_arch = "wasm32"), feature = "web-worker")
+        ))]
         {
             let thread_count = bevy_tasks::ComputeTaskPool::get().thread_num();
             if thread_count <= 1 {
@@ -129,7 +135,10 @@ impl<'w, 's, D: QueryData, F: QueryFilter> QueryParIter<'w, 's, D, F> {
         }
     }
 
-    #[cfg(all(not(target_arch = "wasm32"), feature = "multi_threaded"))]
+    #[cfg(all(
+        feature = "multi_threaded",
+        any(not(target_arch = "wasm32"), feature = "web-worker")
+    ))]
     fn get_batch_size(&self, thread_count: usize) -> usize {
         let max_items = || {
             let id_iter = self.state.matched_storage_ids.iter();
@@ -253,7 +262,10 @@ impl<'w, 's, D: ReadOnlyQueryData, F: QueryFilter, E: EntityEquivalent + Sync>
             func(&mut init, item);
             init
         };
-        #[cfg(any(target_arch = "wasm32", not(feature = "multi_threaded")))]
+        #[cfg(not(all(
+            feature = "multi_threaded",
+            any(not(target_arch = "wasm32"), feature = "web-worker")
+        )))]
         {
             let init = init();
             // SAFETY:
@@ -269,7 +281,10 @@ impl<'w, 's, D: ReadOnlyQueryData, F: QueryFilter, E: EntityEquivalent + Sync>
                     .fold(init, func);
             }
         }
-        #[cfg(all(not(target_arch = "wasm32"), feature = "multi_threaded"))]
+        #[cfg(all(
+            feature = "multi_threaded",
+            any(not(target_arch = "wasm32"), feature = "web-worker")
+        ))]
         {
             let thread_count = bevy_tasks::ComputeTaskPool::get().thread_num();
             if thread_count <= 1 {
@@ -300,7 +315,10 @@ impl<'w, 's, D: ReadOnlyQueryData, F: QueryFilter, E: EntityEquivalent + Sync>
         }
     }
 
-    #[cfg(all(not(target_arch = "wasm32"), feature = "multi_threaded"))]
+    #[cfg(all(
+        feature = "multi_threaded",
+        any(not(target_arch = "wasm32"), feature = "web-worker")
+    ))]
     fn get_batch_size(&self, thread_count: usize) -> usize {
         self.batching_strategy
             .calc_batch_size(|| self.entity_list.len(), thread_count)
@@ -408,7 +426,10 @@ impl<'w, 's, D: QueryData, F: QueryFilter, E: EntityEquivalent + Sync>
             func(&mut init, item);
             init
         };
-        #[cfg(any(target_arch = "wasm32", not(feature = "multi_threaded")))]
+        #[cfg(not(all(
+            feature = "multi_threaded",
+            any(not(target_arch = "wasm32"), feature = "web-worker")
+        )))]
         {
             let init = init();
             // SAFETY:
@@ -424,7 +445,10 @@ impl<'w, 's, D: QueryData, F: QueryFilter, E: EntityEquivalent + Sync>
                     .fold(init, func);
             }
         }
-        #[cfg(all(not(target_arch = "wasm32"), feature = "multi_threaded"))]
+        #[cfg(all(
+            feature = "multi_threaded",
+            any(not(target_arch = "wasm32"), feature = "web-worker")
+        ))]
         {
             let thread_count = bevy_tasks::ComputeTaskPool::get().thread_num();
             if thread_count <= 1 {
@@ -455,7 +479,10 @@ impl<'w, 's, D: QueryData, F: QueryFilter, E: EntityEquivalent + Sync>
         }
     }
 
-    #[cfg(all(not(target_arch = "wasm32"), feature = "multi_threaded"))]
+    #[cfg(all(
+        feature = "multi_threaded",
+        any(not(target_arch = "wasm32"), feature = "web-worker")
+    ))]
     fn get_batch_size(&self, thread_count: usize) -> usize {
         self.batching_strategy
             .calc_batch_size(|| self.entity_list.len(), thread_count)

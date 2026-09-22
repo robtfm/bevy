@@ -147,7 +147,7 @@ pub struct EventMutParIter<'a, E: Event> {
     mutator: &'a mut EventCursor<E>,
     slices: [&'a mut [EventInstance<E>]; 2],
     batching_strategy: BatchingStrategy,
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(any(not(target_arch = "wasm32"), feature = "web-worker"))]
     unread: usize,
 }
 
@@ -171,7 +171,7 @@ impl<'a, E: Event> EventMutParIter<'a, E> {
             mutator,
             slices: [a, b],
             batching_strategy: BatchingStrategy::default(),
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(any(not(target_arch = "wasm32"), feature = "web-worker"))]
             unread: unread_count,
         }
     }
@@ -209,19 +209,19 @@ impl<'a, E: Event> EventMutParIter<'a, E> {
     ///
     /// [`ComputeTaskPool`]: bevy_tasks::ComputeTaskPool
     #[cfg_attr(
-        target_arch = "wasm32",
+        all(target_arch = "wasm32", not(feature = "web-worker")),
         expect(unused_mut, reason = "not mutated on this target")
     )]
     pub fn for_each_with_id<FN: Fn(&'a mut E, EventId<E>) + Send + Sync + Clone>(
         mut self,
         func: FN,
     ) {
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(all(target_arch = "wasm32", not(feature = "web-worker")))]
         {
             self.into_iter().for_each(|(e, i)| func(e, i));
         }
 
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(any(not(target_arch = "wasm32"), feature = "web-worker"))]
         {
             let pool = bevy_tasks::ComputeTaskPool::get();
             let thread_count = pool.thread_num();
