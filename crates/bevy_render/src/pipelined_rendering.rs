@@ -6,7 +6,6 @@ use bevy_ecs::{
     schedule::MainThreadExecutor,
     world::{Mut, World},
 };
-#[cfg(not(target_arch = "wasm32"))]
 use bevy_tasks::ComputeTaskPool;
 
 use crate::RenderApp;
@@ -323,20 +322,12 @@ fn renderer_extract(app_world: &mut World, _world: &mut World) {
         world.resource_scope(|world, mut render_channels: Mut<RenderAppChannels>| {
             // we use a scope here to run any main thread tasks that the render world still needs to run
             // while we wait for the render world to be received.
-            #[cfg(not(target_arch = "wasm32"))]
             let received = ComputeTaskPool::get()
                 .scope_with_executor(true, Some(&*main_thread_executor.0), |s| {
                     s.spawn(async { render_channels.recv().await });
                 })
                 .pop()
                 .unwrap();
-            // The single-threaded task pool only spins `try_tick`, which cannot wait on another
-            // worker, so park this worker on the channel directly.
-            #[cfg(target_arch = "wasm32")]
-            let received = {
-                let _ = &main_thread_executor;
-                futures_lite::future::block_on(render_channels.recv())
-            };
             if let Some(mut render_app) = received {
                 render_app.extract(world);
 

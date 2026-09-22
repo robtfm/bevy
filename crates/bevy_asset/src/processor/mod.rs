@@ -59,6 +59,7 @@ use crate::{
 use alloc::{borrow::ToOwned, boxed::Box, collections::VecDeque, sync::Arc, vec, vec::Vec};
 use bevy_ecs::prelude::*;
 use bevy_platform::collections::{HashMap, HashSet};
+#[cfg(all(not(target_arch = "wasm32"), feature = "multi_threaded"))]
 use bevy_tasks::IoTaskPool;
 use futures_io::ErrorKind;
 use futures_lite::{AsyncReadExt, AsyncWriteExt, StreamExt};
@@ -123,7 +124,7 @@ impl AssetProcessor {
             AssetMetaCheck::Always,
             false,
             UnapprovedPathMode::default(),
-            #[cfg(all(target_arch="wasm32", feature="wasm_threaded_loader"))]
+            #[cfg(all(target_arch = "wasm32", feature = "wasm_threaded_loader"))]
             None,
         );
         Self { server, data }
@@ -565,6 +566,7 @@ impl AssetProcessor {
         loop {
             let mut check_reprocess_queue =
                 core::mem::take(&mut self.data.asset_infos.write().await.check_reprocess_queue);
+            #[cfg(all(not(target_arch = "wasm32"), feature = "multi_threaded"))]
             IoTaskPool::get().scope(|scope| {
                 for path in check_reprocess_queue.drain(..) {
                     let processor = self.clone();
@@ -574,6 +576,11 @@ impl AssetProcessor {
                     });
                 }
             });
+            #[cfg(not(all(not(target_arch = "wasm32"), feature = "multi_threaded")))]
+            for path in check_reprocess_queue.drain(..) {
+                let source = self.get_source(path.source()).unwrap();
+                self.process_asset(source, path.into()).await;
+            }
             let infos = self.data.asset_infos.read().await;
             if infos.check_reprocess_queue.is_empty() {
                 break;

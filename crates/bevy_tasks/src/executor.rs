@@ -24,7 +24,10 @@ cfg_if::cfg_if! {
     }
 }
 
-#[cfg(all(feature = "multi_threaded", not(target_arch = "wasm32")))]
+#[cfg(all(
+    feature = "multi_threaded",
+    any(not(target_arch = "wasm32"), feature = "web-worker")
+))]
 pub use async_task::FallibleTask;
 
 /// Wrapper around a multi-threading-aware async executor.

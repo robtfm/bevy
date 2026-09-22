@@ -41,6 +41,10 @@ web = [
   "dep:futures-channel",
 ]
 
+## The app runs on a web worker over shared memory (the `atomics` target feature):
+## the pool is then multi-threaded, with threads joining through `TaskPool::run_worker`.
+web-worker = []
+
 [dependencies]
 bevy_platform = { path = "../bevy_platform", version = "0.16.1", default-features = false, features = [
   "alloc",

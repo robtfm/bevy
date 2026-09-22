@@ -17,14 +17,24 @@ pub struct Task<T>(oneshot::Receiver<Result<T, Panic>>);
 
 impl<T: 'static> Task<T> {
     pub(crate) fn wrap_future(future: impl Future<Output = T> + 'static) -> Self {
+        let (task, driver) = Self::split(future);
+        wasm_bindgen_futures::spawn_local(driver);
+        task
+    }
+
+    /// Splits `future` into the task handle and the future that drives it; the caller
+    /// decides where the latter runs.
+    pub(crate) fn split(
+        future: impl Future<Output = T> + 'static,
+    ) -> (Self, impl Future<Output = ()> + 'static) {
         let (sender, receiver) = oneshot::channel();
-        wasm_bindgen_futures::spawn_local(async move {
+        let driver = async move {
             // Catch any panics that occur when polling the future so they can
             // be propagated back to the task handle.
             let value = CatchUnwind(AssertUnwindSafe(future)).await;
             let _ = sender.send(value);
-        });
-        Self(receiver.into_future())
+        };
+        (Self(receiver.into_future()), driver)
     }
 
     /// When building for Wasm, this method has no effect.

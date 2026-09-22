@@ -1,9 +1,12 @@
-use alloc::{boxed::Box, format, string::String, vec::Vec};
+use alloc::{boxed::Box, string::String, vec::Vec};
 use core::{future::Future, marker::PhantomData, mem, panic::AssertUnwindSafe};
 use std::{
     thread::{self, JoinHandle},
     thread_local,
 };
+
+#[cfg(all(target_arch = "wasm32", feature = "web"))]
+use core::{cell::Cell, pin::Pin};
 
 use crate::executor::FallibleTask;
 use bevy_platform::sync::Arc;
@@ -139,6 +142,86 @@ pub struct TaskPool {
     // The inner state of the pool.
     threads: Vec<JoinHandle<()>>,
     shutdown_tx: async_channel::Sender<()>,
+
+    /// What a thread joining the pool through [`TaskPool::run_worker`] needs, since on the web
+    /// the pool spawns no threads itself.
+    #[cfg(target_arch = "wasm32")]
+    worker: WorkerSetup,
+    /// Hands futures [`TaskPool::spawn`]ed from the pool's own threads (which never return to
+    /// their event loop) to the JS event loop of the thread the pool was created on.
+    #[cfg(all(target_arch = "wasm32", feature = "web"))]
+    js_thread: JsThread,
+}
+
+#[cfg(all(target_arch = "wasm32", feature = "web"))]
+thread_local! {
+    /// Set on threads that joined a pool through [`TaskPool::run_worker`].
+    static POOL_WORKER: Cell<bool> = const { Cell::new(false) };
+}
+
+#[cfg(target_arch = "wasm32")]
+struct WorkerSetup {
+    num_threads: usize,
+    shutdown_rx: async_channel::Receiver<()>,
+    on_thread_spawn: Option<Arc<dyn Fn() + Send + Sync + 'static>>,
+    on_thread_destroy: Option<Arc<dyn Fn() + Send + Sync + 'static>>,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl core::fmt::Debug for WorkerSetup {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("WorkerSetup")
+            .field("num_threads", &self.num_threads)
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(all(target_arch = "wasm32", feature = "web"))]
+#[derive(Debug)]
+struct JsThread {
+    sender: futures_channel::mpsc::UnboundedSender<RemoteFuture>,
+}
+
+/// A future handed from a pool thread to the JS thread to be driven there.
+#[cfg(all(target_arch = "wasm32", feature = "web"))]
+struct RemoteFuture(Pin<Box<dyn Future<Output = ()> + 'static>>);
+
+// SAFETY: the future is only ever polled on the pool's JS thread. It may have been built on
+// another thread, so as with the single-threaded web pool it must not capture anything tied to
+// the thread it was built on (`JsValue`s in particular, which live in that thread's heap).
+#[cfg(all(target_arch = "wasm32", feature = "web"))]
+#[expect(unsafe_code, reason = "see the safety comment above")]
+unsafe impl Send for RemoteFuture {}
+
+/// Runs `ex` on the calling thread until the pool is dropped (the shutdown channel closes).
+fn run_worker_thread(
+    ex: &crate::executor::Executor<'static>,
+    shutdown_rx: &async_channel::Receiver<()>,
+    on_thread_spawn: Option<Arc<dyn Fn() + Send + Sync + 'static>>,
+    on_thread_destroy: Option<Arc<dyn Fn() + Send + Sync + 'static>>,
+) {
+    TaskPool::LOCAL_EXECUTOR.with(|local_executor| {
+        if let Some(on_thread_spawn) = on_thread_spawn {
+            on_thread_spawn();
+            drop(on_thread_spawn);
+        }
+        let _destructor = CallOnDrop(on_thread_destroy);
+        loop {
+            let res = std::panic::catch_unwind(|| {
+                let tick_forever = async move {
+                    loop {
+                        local_executor.tick().await;
+                    }
+                };
+                block_on(ex.run(tick_forever.or(shutdown_rx.recv())))
+            });
+            if let Ok(value) = res {
+                // Use unwrap_err because we expect a Closed error
+                value.unwrap_err();
+                break;
+            }
+        }
+    });
 }
 
 impl TaskPool {
@@ -166,15 +249,21 @@ impl TaskPool {
             .num_threads
             .unwrap_or_else(crate::available_parallelism);
 
+        // The pool spawns no threads on the web: a worker needs the module's JS glue to
+        // instantiate over the shared memory, which this crate has no access to. Whoever has it
+        // spawns the workers and each joins the pool through `run_worker`.
+        #[cfg(target_arch = "wasm32")]
+        let threads = Vec::new();
+        #[cfg(not(target_arch = "wasm32"))]
         let threads = (0..num_threads)
             .map(|i| {
                 let ex = Arc::clone(&executor);
                 let shutdown_rx = shutdown_rx.clone();
 
                 let thread_name = if let Some(thread_name) = builder.thread_name.as_deref() {
-                    format!("{thread_name} ({i})")
+                    alloc::format!("{thread_name} ({i})")
                 } else {
-                    format!("TaskPool ({i})")
+                    alloc::format!("TaskPool ({i})")
                 };
                 let mut thread_builder = thread::Builder::new().name(thread_name);
 
@@ -187,43 +276,68 @@ impl TaskPool {
 
                 thread_builder
                     .spawn(move || {
-                        TaskPool::LOCAL_EXECUTOR.with(|local_executor| {
-                            if let Some(on_thread_spawn) = on_thread_spawn {
-                                on_thread_spawn();
-                                drop(on_thread_spawn);
-                            }
-                            let _destructor = CallOnDrop(on_thread_destroy);
-                            loop {
-                                let res = std::panic::catch_unwind(|| {
-                                    let tick_forever = async move {
-                                        loop {
-                                            local_executor.tick().await;
-                                        }
-                                    };
-                                    block_on(ex.run(tick_forever.or(shutdown_rx.recv())))
-                                });
-                                if let Ok(value) = res {
-                                    // Use unwrap_err because we expect a Closed error
-                                    value.unwrap_err();
-                                    break;
-                                }
-                            }
-                        });
+                        run_worker_thread(&ex, &shutdown_rx, on_thread_spawn, on_thread_destroy);
                     })
                     .expect("Failed to spawn thread.")
             })
             .collect();
 
+        #[cfg(all(target_arch = "wasm32", feature = "web"))]
+        let js_thread = {
+            let (sender, mut receiver) = futures_channel::mpsc::unbounded::<RemoteFuture>();
+            wasm_bindgen_futures::spawn_local(async move {
+                while let Some(RemoteFuture(future)) =
+                    futures_lite::StreamExt::next(&mut receiver).await
+                {
+                    wasm_bindgen_futures::spawn_local(future);
+                }
+            });
+            JsThread { sender }
+        };
+
         Self {
             executor,
             threads,
             shutdown_tx,
+            #[cfg(target_arch = "wasm32")]
+            worker: WorkerSetup {
+                num_threads,
+                shutdown_rx,
+                on_thread_spawn: builder.on_thread_spawn,
+                on_thread_destroy: builder.on_thread_destroy,
+            },
+            #[cfg(all(target_arch = "wasm32", feature = "web"))]
+            js_thread,
         }
+    }
+
+    /// Makes the calling thread one of the pool's threads: runs the pool's tasks until the
+    /// pool is dropped.
+    ///
+    /// The pool spawns no threads on the web (a worker needs the module's JS glue, which this
+    /// crate has no access to). Whoever spawns the workers, sharing the module and memory, has
+    /// each call this once after initializing its instance. The pool works before any thread
+    /// has joined: scopes then run on the thread that opens them.
+    #[cfg(target_arch = "wasm32")]
+    pub fn run_worker(&self) {
+        #[cfg(feature = "web")]
+        POOL_WORKER.with(|flag| flag.set(true));
+        run_worker_thread(
+            &self.executor,
+            &self.worker.shutdown_rx,
+            self.worker.on_thread_spawn.clone(),
+            self.worker.on_thread_destroy.clone(),
+        );
     }
 
     /// Return the number of threads owned by the task pool
     pub fn thread_num(&self) -> usize {
-        self.threads.len()
+        #[cfg(not(target_arch = "wasm32"))]
+        return self.threads.len();
+        // On the web the thread that opens a scope works it too (see `scope_with_executor_inner`),
+        // so it counts as a thread of the pool for batching purposes.
+        #[cfg(target_arch = "wasm32")]
+        return self.worker.num_threads + 1;
     }
 
     /// Allows spawning non-`'static` futures on the thread pool. The function takes a callback,
@@ -426,7 +540,11 @@ impl TaskPool {
                     results
                 };
 
-                let tick_task_pool_executor = tick_task_pool_executor || self.threads.is_empty();
+                // On the web the pool's threads join asynchronously (and may never), so the
+                // scope's thread always works the pool too.
+                let tick_task_pool_executor = tick_task_pool_executor
+                    || self.threads.is_empty()
+                    || cfg!(target_arch = "wasm32");
 
                 // we get this from a thread local so we should always be on the scope executors thread.
                 // note: it is possible `scope_executor` and `external_executor` is the same executor,
@@ -556,11 +674,34 @@ impl TaskPool {
     ///
     /// If the provided future is non-`Send`, [`TaskPool::spawn_local`] should
     /// be used instead.
+    #[cfg(not(all(target_arch = "wasm32", feature = "web")))]
     pub fn spawn<T>(&self, future: impl Future<Output = T> + Send + 'static) -> Task<T>
     where
         T: Send + 'static,
     {
         Task::new(self.executor.spawn(future))
+    }
+
+    /// Spawns a static future on the calling thread's JS event loop, as the single-threaded
+    /// web pool does. Called from one of the pool's own threads, which never return to their
+    /// event loop, the future is instead moved to the thread the pool was created on before it
+    /// is first polled, so it must not capture anything tied to the calling thread (`JsValue`s
+    /// in particular). The returned [`Task`] can be polled from any thread.
+    #[cfg(all(target_arch = "wasm32", feature = "web"))]
+    pub fn spawn<T>(&self, future: impl Future<Output = T> + 'static) -> Task<T>
+    where
+        T: 'static,
+    {
+        if !POOL_WORKER.with(Cell::get) {
+            Task::wrap_future(future)
+        } else {
+            let (task, driver) = Task::split(future);
+            let _ = self
+                .js_thread
+                .sender
+                .unbounded_send(RemoteFuture(Box::pin(driver)));
+            task
+        }
     }
 
     /// Spawns a static future on the thread-local async executor for the
@@ -574,11 +715,21 @@ impl TaskPool {
     ///
     /// Users should generally prefer to use [`TaskPool::spawn`] instead,
     /// unless the provided future is not `Send`.
+    #[cfg(not(all(target_arch = "wasm32", feature = "web")))]
     pub fn spawn_local<T>(&self, future: impl Future<Output = T> + 'static) -> Task<T>
     where
         T: 'static,
     {
         Task::new(TaskPool::LOCAL_EXECUTOR.with(|executor| executor.spawn(future)))
+    }
+
+    /// Spawns a static future on the JS event loop. This is exactly the same as [`TaskPool::spawn`].
+    #[cfg(all(target_arch = "wasm32", feature = "web"))]
+    pub fn spawn_local<T>(&self, future: impl Future<Output = T> + 'static) -> Task<T>
+    where
+        T: 'static,
+    {
+        self.spawn(future)
     }
 
     /// Runs a function with the local executor. Typically used to tick
