@@ -1,10 +1,20 @@
 use async_channel::{Receiver, Sender};
 
 use bevy_app::{App, AppExit, AppLabel, Plugin, SubApp};
+use bevy_diagnostic::{
+    Diagnostic, DiagnosticMeasurement, DiagnosticPath, DiagnosticsStore, RegisterDiagnostic,
+};
 use bevy_ecs::{
     resource::Resource,
     schedule::MainThreadExecutor,
     world::{Mut, World},
+};
+use bevy_platform::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex,
+    },
+    time::Instant,
 };
 use bevy_tasks::ComputeTaskPool;
 
@@ -116,6 +126,107 @@ impl Drop for RenderAppChannels {
 /// - Once both the `main app schedule` and the `render schedule` are finished running, `extract` is run again.
 ///
 /// [`SyncWorldPlugin`]: crate::sync_world::SyncWorldPlugin
+/// Wall-clock timings of the pipeline's stages, per frame, in milliseconds. Published into the
+/// main world's [`DiagnosticsStore`] when the render app is handed over.
+pub mod diagnostics {
+    use bevy_diagnostic::DiagnosticPath;
+
+    /// The main world's update, from the previous handoff to this one.
+    pub const MAIN_UPDATE: DiagnosticPath = DiagnosticPath::const_new("pipelined/main_update");
+    /// The main world waiting for the render app to come back.
+    pub const WAIT_RENDER: DiagnosticPath = DiagnosticPath::const_new("pipelined/wait_render");
+    /// The main world blocked handing the render app over (web: until the render worker's
+    /// animation-frame task takes it).
+    pub const WAIT_HANDOFF: DiagnosticPath = DiagnosticPath::const_new("pipelined/wait_handoff");
+    /// The render app's update on the render thread.
+    pub const RENDER_UPDATE: DiagnosticPath = DiagnosticPath::const_new("pipelined/render_update");
+    /// The render thread waiting for the main world's handoff.
+    pub const WAIT_MAIN: DiagnosticPath = DiagnosticPath::const_new("pipelined/wait_main");
+    /// Web: the render worker waiting for the GPU backlog to drain.
+    pub const WAIT_GPU: DiagnosticPath = DiagnosticPath::const_new("pipelined/wait_gpu");
+    /// Web: the render worker waiting for the next animation frame.
+    pub const WAIT_FRAME: DiagnosticPath = DiagnosticPath::const_new("pipelined/wait_frame");
+    /// Web: estimated GPU time per frame, from when the frame's work could start (its submission
+    /// or the previous frame's completion) to its fence completing.
+    pub const GPU: DiagnosticPath = DiagnosticPath::const_new("pipelined/gpu");
+}
+
+/// The render thread's timings for its last frame, read by the main world at the next handoff.
+#[derive(Default, Clone, Copy)]
+struct RenderThreadStats {
+    render_update: f64,
+    wait_main: f64,
+    wait_gpu: f64,
+    wait_frame: f64,
+    gpu: f64,
+}
+
+static RENDER_THREAD_STATS: Mutex<RenderThreadStats> = Mutex::new(RenderThreadStats {
+    render_update: 0.0,
+    wait_main: 0.0,
+    wait_gpu: 0.0,
+    wait_frame: 0.0,
+    gpu: 0.0,
+});
+
+/// When the main world last handed the render app over; the next handoff measures its update.
+static LAST_HANDOFF: Mutex<Option<Instant>> = Mutex::new(None);
+
+/// Set by [`PipelinedRenderingDiagnosticsPlugin`]; nothing is measured until it is.
+static DIAGNOSTICS_ENABLED: AtomicBool = AtomicBool::new(false);
+
+fn enabled() -> bool {
+    DIAGNOSTICS_ENABLED.load(Ordering::Relaxed)
+}
+
+fn timer() -> Option<Instant> {
+    enabled().then(Instant::now)
+}
+
+fn elapsed_ms(since: Option<Instant>) -> f64 {
+    since.map_or(0.0, |since| since.elapsed().as_secs_f64() * 1000.0)
+}
+
+fn record(store: &mut DiagnosticsStore, path: &DiagnosticPath, value: f64) {
+    if let Some(diagnostic) = store.get_mut(path) {
+        diagnostic.add_measurement(DiagnosticMeasurement {
+            time: Instant::now(),
+            value,
+        });
+    }
+}
+
+/// Publishes the pipeline's per-frame timings ([`diagnostics`]) into the main world's
+/// [`DiagnosticsStore`]. Without it nothing is measured.
+#[derive(Default)]
+pub struct PipelinedRenderingDiagnosticsPlugin;
+
+impl Plugin for PipelinedRenderingDiagnosticsPlugin {
+    fn build(&self, app: &mut App) {
+        #[cfg(target_arch = "wasm32")]
+        let web = [
+            diagnostics::WAIT_GPU,
+            diagnostics::WAIT_FRAME,
+            diagnostics::GPU,
+        ];
+        #[cfg(not(target_arch = "wasm32"))]
+        let web: [DiagnosticPath; 0] = [];
+        for path in [
+            diagnostics::MAIN_UPDATE,
+            diagnostics::WAIT_RENDER,
+            diagnostics::WAIT_HANDOFF,
+            diagnostics::RENDER_UPDATE,
+            diagnostics::WAIT_MAIN,
+        ]
+        .into_iter()
+        .chain(web)
+        {
+            app.register_diagnostic(Diagnostic::new(path).with_suffix("ms"));
+        }
+        DIAGNOSTICS_ENABLED.store(true, Ordering::Relaxed);
+    }
+}
+
 #[derive(Default)]
 pub struct PipelinedRenderingPlugin;
 
@@ -177,30 +288,52 @@ impl Plugin for PipelinedRenderingPlugin {
             // queued behind everything submitted before it, and wgpu's WebGPU backend has no
             // `on_submitted_work_done`.
             let mut fences: Vec<crate::render_resource::Buffer> = Vec::new();
-            let mut in_flight: std::collections::VecDeque<(usize, async_channel::Receiver<()>)> =
+            // Per frame in flight: its fence, and when the fence completed (sent by the map
+            // callback). With the frame's submission time that estimates the GPU time.
+            let mut in_flight: std::collections::VecDeque<(usize, Receiver<Instant>, Instant)> =
                 std::collections::VecDeque::new();
+            let mut last_completed: Option<Instant> = None;
             let mut frame: usize = 0;
+            let mut stats = RenderThreadStats::default();
             loop {
                 // Take the handoff first, then render inside the next animation-frame callback:
                 // frames committed outside the callback are not paced by the compositor, and
                 // when two land in one refresh the earlier one is dropped.
+                let started = timer();
                 let Ok(mut render_app) = app_to_render_receiver.recv().await else {
                     break;
                 };
+                stats.wait_main = elapsed_ms(started);
+                let started = timer();
                 // A worker's animation frames are not throttled by GPU backlog the way a page's
                 // are, so bound the backlog here before waiting for the next frame.
                 while in_flight.len() >= FRAMES_IN_FLIGHT {
-                    let (index, done) = in_flight.pop_front().unwrap();
-                    done.recv().await.ok();
+                    let (index, done, submitted) = in_flight.pop_front().unwrap();
+                    if let Ok(completed) = done.recv().await {
+                        let could_start = last_completed.map_or(submitted, |c| c.max(submitted));
+                        stats.gpu = completed
+                            .saturating_duration_since(could_start)
+                            .as_secs_f64()
+                            * 1000.0;
+                        last_completed = Some(completed);
+                    }
                     fences[index].unmap();
                 }
+                stats.wait_gpu = elapsed_ms(started);
+                let started = timer();
                 if web::animation_frame().await.is_err() {
                     break;
                 }
+                stats.wait_frame = elapsed_ms(started);
                 if handoff_taken_sender.send(()).await.is_err() {
                     break;
                 }
+                let started = timer();
                 render_app.update();
+                stats.render_update = elapsed_ms(started);
+                if enabled() {
+                    *RENDER_THREAD_STATS.lock().unwrap() = stats;
+                }
                 if fences.is_empty() {
                     if let Some(device) = render_app
                         .world()
@@ -225,10 +358,10 @@ impl Plugin for PipelinedRenderingPlugin {
                     wgpu::Buffer::slice(&fences[index], ..).map_async(
                         wgpu::MapMode::Read,
                         move |_| {
-                            sender.try_send(()).ok();
+                            sender.try_send(Instant::now()).ok();
                         },
                     );
-                    in_flight.push_back((index, receiver));
+                    in_flight.push_back((index, receiver, Instant::now()));
                     frame += 1;
                 }
                 if render_to_app_sender.send(render_app).await.is_err() {
@@ -244,8 +377,10 @@ impl Plugin for PipelinedRenderingPlugin {
             let _span = tracing::info_span!("render thread").entered();
 
             let compute_task_pool = ComputeTaskPool::get();
+            let mut stats = RenderThreadStats::default();
             loop {
                 // run a scope here to allow main world to use this thread while it's waiting for the render app
+                let started = timer();
                 let sent_app = compute_task_pool
                     .scope(|s| {
                         s.spawn(async { app_to_render_receiver.recv().await });
@@ -254,11 +389,17 @@ impl Plugin for PipelinedRenderingPlugin {
                 let Some(Ok(mut render_app)) = sent_app else {
                     break;
                 };
+                stats.wait_main = elapsed_ms(started);
 
                 {
                     #[cfg(feature = "trace")]
                     let _sub_app_span = tracing::info_span!("sub app", name = ?RenderApp).entered();
+                    let started = timer();
                     render_app.update();
+                    stats.render_update = elapsed_ms(started);
+                    if enabled() {
+                        *RENDER_THREAD_STATS.lock().unwrap() = stats;
+                    }
                 }
 
                 if render_to_app_sender.send_blocking(render_app).is_err() {
@@ -318,6 +459,14 @@ mod web {
 // This function waits for the rendering world to be received,
 // runs extract, and then sends the rendering world back to the render thread.
 fn renderer_extract(app_world: &mut World, _world: &mut World) {
+    let handoff = timer();
+    let main_update = handoff.and_then(|handoff| {
+        LAST_HANDOFF
+            .lock()
+            .unwrap()
+            .take()
+            .map(|last| handoff.saturating_duration_since(last).as_secs_f64() * 1000.0)
+    });
     app_world.resource_scope(|world, main_thread_executor: Mut<MainThreadExecutor>| {
         world.resource_scope(|world, mut render_channels: Mut<RenderAppChannels>| {
             // we use a scope here to run any main thread tasks that the render world still needs to run
@@ -328,10 +477,30 @@ fn renderer_extract(app_world: &mut World, _world: &mut World) {
                 })
                 .pop()
                 .unwrap();
+            let wait_render = elapsed_ms(handoff);
             if let Some(mut render_app) = received {
                 render_app.extract(world);
 
+                let sending = timer();
                 render_channels.send_blocking(render_app);
+                let wait_handoff = elapsed_ms(sending);
+                let store = timer().and_then(|now| {
+                    *LAST_HANDOFF.lock().unwrap() = Some(now);
+                    world.get_resource_mut::<DiagnosticsStore>()
+                });
+                if let Some(mut store) = store {
+                    if let Some(main_update) = main_update {
+                        record(&mut store, &diagnostics::MAIN_UPDATE, main_update);
+                    }
+                    record(&mut store, &diagnostics::WAIT_RENDER, wait_render);
+                    record(&mut store, &diagnostics::WAIT_HANDOFF, wait_handoff);
+                    let stats = *RENDER_THREAD_STATS.lock().unwrap();
+                    record(&mut store, &diagnostics::RENDER_UPDATE, stats.render_update);
+                    record(&mut store, &diagnostics::WAIT_MAIN, stats.wait_main);
+                    record(&mut store, &diagnostics::WAIT_GPU, stats.wait_gpu);
+                    record(&mut store, &diagnostics::WAIT_FRAME, stats.wait_frame);
+                    record(&mut store, &diagnostics::GPU, stats.gpu);
+                }
             } else {
                 // Renderer thread panicked
                 world.send_event(AppExit::error());
