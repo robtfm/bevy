@@ -208,6 +208,10 @@ impl Render {
         use RenderSet::*;
 
         let mut schedule = Schedule::new(Self);
+        // Render-world resources wrap thread-affine WebGPU objects, so on the web the schedule
+        // stays on the thread that runs it.
+        #[cfg(all(target_arch = "wasm32", target_feature = "atomics"))]
+        schedule.set_executor_kind(bevy_ecs::schedule::ExecutorKind::SingleThreaded);
 
         schedule.configure_sets(
             (
@@ -550,6 +554,11 @@ unsafe fn initialize_render_app(app: &mut App) {
         ..default()
     });
     extract_schedule.set_apply_final_deferred(false);
+
+    // Render-world resources wrap thread-affine WebGPU objects, so on the web the render
+    // world's schedules stay on the thread that runs them (see also `Render::base_schedule`).
+    #[cfg(all(target_arch = "wasm32", target_feature = "atomics"))]
+    extract_schedule.set_executor_kind(bevy_ecs::schedule::ExecutorKind::SingleThreaded);
 
     render_app
         .add_schedule(extract_schedule)
