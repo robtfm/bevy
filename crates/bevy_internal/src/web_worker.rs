@@ -13,7 +13,9 @@
 //! executed on the render worker before the app runs. Optionally the app supplies a render
 //! worker setup export, called there before the render world is created: the place to patch
 //! WebGPU before the device exists, or to create the wgpu resources itself and
-//! [provide](bevy_render::web_worker::provide_render_resources) them.
+//! [provide](bevy_render::web_worker::provide_render_resources) them. [`start_render`] and
+//! [`start_with_render`] split [`start`] so the render worker (and that setup) can start ahead
+//! of the engine.
 //!
 //! Functions the engine reaches on the page (JS hooks looked up on `self`) are declared in
 //! `#[wasm_bindgen(js_namespace = self)]` extern blocks marked [`page_functions`]; each worker
@@ -90,8 +92,27 @@ pub struct WebWorkers {
     pub engine: Worker,
 }
 
+/// The render worker [`start_render`] spawned, for [`start_with_render`].
+pub struct RenderWorker {
+    /// The worker.
+    pub worker: Worker,
+    worker_id: u32,
+}
+
 /// Page side: prepares `canvas` for the engine and spawns its workers.
 pub fn start(canvas: HtmlCanvasElement, config: &WebWorkerConfig) -> Result<WebWorkers, JsValue> {
+    let render = start_render(canvas, config)?;
+    start_with_render(render, config)
+}
+
+/// Page side: prepares `canvas` for the engine and spawns the render worker alone, ahead of
+/// [`start_with_render`]. Its setup export runs and its device is created as soon as it is
+/// up; it then waits for the engine worker's render world, so the app can spawn it well before
+/// it starts the engine (to warm a pipeline cache, say).
+pub fn start_render(
+    canvas: HtmlCanvasElement,
+    config: &WebWorkerConfig,
+) -> Result<RenderWorker, JsValue> {
     let (worker_id, offscreen) = bevy_winit::prepare_worker(canvas)?;
     let canvas_arg: JsValue = offscreen.clone().into();
     let mut render_calls = Vec::new();
@@ -99,13 +120,25 @@ pub fn start(canvas: HtmlCanvasElement, config: &WebWorkerConfig) -> Result<WebW
         render_calls.push((setup.as_str(), vec![canvas_arg.clone()]));
     }
     render_calls.push((RENDER_ENTRY, vec![canvas_arg]));
-    let render = spawn(
+    let worker = spawn(
         &config.glue_url,
         &render_calls,
         "render",
         config.render_stack_size,
         &[offscreen.into()],
     )?;
+    Ok(RenderWorker { worker, worker_id })
+}
+
+/// Page side: spawns the compute and engine workers for a render worker from [`start_render`].
+pub fn start_with_render(
+    render: RenderWorker,
+    config: &WebWorkerConfig,
+) -> Result<WebWorkers, JsValue> {
+    let RenderWorker {
+        worker: render,
+        worker_id,
+    } = render;
     let compute = (0..config.compute_threads)
         .map(|i| {
             spawn(
