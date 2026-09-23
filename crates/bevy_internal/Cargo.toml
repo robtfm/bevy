@@ -10,7 +10,16 @@ keywords = ["game", "engine", "gamedev", "graphics", "bevy"]
 categories = ["game-engines", "graphics", "gui", "rendering"]
 
 [features]
-web-worker = ["bevy_ecs/web-worker", "bevy_tasks/web-worker", "bevy_winit/web-worker", "bevy_render?/web-worker"]
+web-worker = [
+  "bevy_ecs/web-worker",
+  "bevy_tasks/web-worker",
+  "bevy_winit/web-worker",
+  "bevy_render?/web-worker",
+  "dep:wasm-bindgen",
+  "dep:wasm-bindgen-futures",
+  "dep:js-sys",
+  "dep:web-sys",
+]
 trace = [
   "bevy_app/trace",
   "bevy_asset?/trace",
@@ -442,6 +451,16 @@ bevy_window = { path = "../bevy_window", optional = true, version = "0.16.1", de
   "bevy_reflect",
 ] }
 bevy_winit = { path = "../bevy_winit", optional = true, version = "0.16.1", default-features = false }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = { version = "0.2", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+js-sys = { version = "0.3", optional = true }
+web-sys = { version = "0.3.67", optional = true, features = [
+  'HtmlCanvasElement',
+  'OffscreenCanvas',
+  'Worker',
+] }
 
 [lints]
 workspace = true

@@ -32,6 +32,8 @@ use system::{changed_windows, check_keyboard_focus_lost, despawn_windows};
 pub use system::{create_monitors, create_windows};
 #[cfg(all(target_family = "wasm", target_os = "unknown"))]
 pub use winit::platform::web::CustomCursorExtWebSys;
+#[cfg(all(target_family = "wasm", target_os = "unknown", feature = "web-worker"))]
+pub use winit::platform::web::{attach_worker, prepare_worker};
 pub use winit::{
     event_loop::EventLoopProxy,
     window::{CustomCursor as WinitCustomCursor, CustomCursorSource},

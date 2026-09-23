@@ -11,6 +11,7 @@ extern crate proc_macro;
 mod bevy_main;
 mod derefs;
 mod enum_variant_meta;
+mod page_functions;
 
 use bevy_macro_utils::{derive_label, BevyManifest};
 use proc_macro::TokenStream;
@@ -209,4 +210,16 @@ pub fn derive_app_label(input: TokenStream) -> TokenStream {
     trait_path.segments.push(format_ident!("AppLabel").into());
     dyn_eq_path.segments.push(format_ident!("DynEq").into());
     derive_label(input, "AppLabel", &trait_path, &dyn_eq_path)
+}
+
+/// Registers the functions of a `#[wasm_bindgen(js_namespace = self)]` extern block as page
+/// functions: ones the engine calls on the page's global, relayed there when the engine runs on
+/// a web worker (`bevy::web_worker`). The block is emitted unchanged, followed by a generated
+/// export listing the functions' JS names, which the workers read to install the relays.
+///
+/// The relays resolve with a promise, so a function returning a value must be `async` or return
+/// `js_sys::Promise`; other return types are rejected. Place it after any `#[cfg]` on the block.
+#[proc_macro_attribute]
+pub fn page_functions(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    page_functions::page_functions(item)
 }
