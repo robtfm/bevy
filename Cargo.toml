@@ -4346,4 +4346,4 @@ category = "Shaders"
 wasm = false
 
 [patch.crates-io]
-winit = { git = "https://github.com/eordano/winit", rev = "54e1fbb990c1ccd8cf205127381617509979dcb9" }
+winit = { git = "https://github.com/robtfm/winit", branch = "v0.30.x" }
