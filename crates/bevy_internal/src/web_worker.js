@@ -5,9 +5,9 @@
 // once its wasm instance is up (over the shared module and memory the page passes). The page functions
 // the engine calls (extern blocks marked `#[page_functions]`, listed by the glue exports that
 // attribute generates) each become a function on the worker's global that posts the call to the
-// page and resolves with the page function's result. Console output is mirrored to the page
-// under the worker's tag. When the last export returns (or its promise resolves) the worker
-// posts `{ __bevy_ready: tag }`; if importing the glue or an export fails it posts
+// page and resolves with the page function's result. Console output is sent to the page to
+// print. When the last export returns (or its promise resolves) the worker posts
+// `{ __bevy_ready: tag }`; if importing the glue or an export fails it posts
 // `{ __bevy_ready: tag, error }` instead.
 
 /**
@@ -87,17 +87,19 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
   });
 }
 
-// Mirrors this worker's console to the page. Arguments are passed through as-is where they can
-// be cloned, so styled (`%c`) lines render the same on the page.
+// Sends this worker's console to the page, which prints it (and whose console hooks see it).
+// It is not printed here as well: DevTools shows a worker's console alongside the page's, so
+// every line would appear twice. Arguments are passed through as-is where they can be cloned, so
+// styled (`%c`) lines render the same on the page.
 function forwardConsole(tag) {
   for (const level of ["log", "info", "warn", "error", "debug"]) {
     const original = console[level].bind(console);
     console[level] = (...args) => {
-      original(...args);
       try {
         postMessage({ __bevy_log: level, tag, args: args.map(cloneable) });
       } catch (_) {
-        /* not cloneable; the worker's own console still has it */
+        // not cloneable: print it here instead
+        original(...args);
       }
     };
   }
