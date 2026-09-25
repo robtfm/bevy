@@ -79,6 +79,8 @@ pub struct SceneSpawner {
     scenes_to_despawn: Vec<AssetId<DynamicScene>>,
     instances_to_despawn: Vec<InstanceId>,
     scenes_with_parent: Vec<(InstanceId, Entity)>,
+    // instances spawned as a child are forgotten when their parent is despawned
+    instance_parents: HashMap<InstanceId, Entity>,
     instances_ready: Vec<(InstanceId, Option<Entity>)>,
 }
 
@@ -155,6 +157,7 @@ impl SceneSpawner {
         self.dynamic_scenes_to_spawn
             .push((id.into(), instance_id, Some(parent)));
         self.scenes_with_parent.push((instance_id, parent));
+        self.instance_parents.insert(instance_id, parent);
         instance_id
     }
 
@@ -171,6 +174,7 @@ impl SceneSpawner {
         self.scenes_to_spawn
             .push((id.into(), instance_id, Some(parent)));
         self.scenes_with_parent.push((instance_id, parent));
+        self.instance_parents.insert(instance_id, parent);
         instance_id
     }
 
@@ -189,8 +193,14 @@ impl SceneSpawner {
     }
 
     /// This will remove all records of this instance, without despawning any entities.
+    /// If the instance has not spawned yet, it will not be spawned.
     pub fn unregister_instance(&mut self, instance_id: InstanceId) {
         self.spawned_instances.remove(&instance_id);
+        self.instance_parents.remove(&instance_id);
+        self.scenes_with_parent.retain(|(id, _)| *id != instance_id);
+        self.scenes_to_spawn.retain(|(_, id, _)| *id != instance_id);
+        self.dynamic_scenes_to_spawn
+            .retain(|(_, id, _)| *id != instance_id);
     }
 
     /// Immediately despawns all instances of a dynamic scene.
@@ -209,6 +219,7 @@ impl SceneSpawner {
 
     /// Immediately despawns a scene instance, removing all its entities from the world.
     pub fn despawn_instance_sync(&mut self, world: &mut World, instance_id: &InstanceId) {
+        self.instance_parents.remove(instance_id);
         if let Some(instance) = self.spawned_instances.remove(instance_id) {
             for &entity in instance.entity_map.values() {
                 if let Ok(entity_mut) = world.get_entity_mut(entity) {
@@ -449,19 +460,23 @@ impl SceneSpawner {
 /// System that handles scheduled scene instance spawning and despawning through a [`SceneSpawner`].
 pub fn scene_spawner_system(world: &mut World) {
     world.resource_scope(|world, mut scene_spawner: Mut<SceneSpawner>| {
-        // remove any loading instances where parent is deleted
+        // forget any instances (loading or spawned) where parent is deleted
         let mut dead_instances = <HashSet<_>>::default();
+        scene_spawner.instance_parents.retain(|instance, parent| {
+            let retain = world.get_entity(*parent).is_ok();
+
+            if !retain {
+                dead_instances.insert(*instance);
+            }
+
+            retain
+        });
+        for instance in &dead_instances {
+            scene_spawner.spawned_instances.remove(instance);
+        }
         scene_spawner
             .scenes_with_parent
-            .retain(|(instance, parent)| {
-                let retain = world.get_entity(*parent).is_ok();
-
-                if !retain {
-                    dead_instances.insert(*instance);
-                }
-
-                retain
-            });
+            .retain(|(instance, _)| !dead_instances.contains(instance));
         scene_spawner
             .dynamic_scenes_to_spawn
             .retain(|(_, instance, _)| !dead_instances.contains(instance));
@@ -887,6 +902,49 @@ mod tests {
 
         app.update();
         check(app.world_mut(), 0);
+    }
+
+    #[test]
+    fn child_instance_is_forgotten_with_its_parent() {
+        let mut app = setup();
+        let scene = build_scene(&mut app);
+
+        let parent = app.world_mut().spawn_empty().id();
+        let instance = app
+            .world_mut()
+            .resource_mut::<SceneSpawner>()
+            .spawn_as_child(scene, parent);
+        app.update();
+        assert!(app
+            .world()
+            .resource::<SceneSpawner>()
+            .instance_is_ready(instance));
+
+        app.world_mut().entity_mut(parent).despawn();
+        app.update();
+
+        let scene_spawner = app.world().resource::<SceneSpawner>();
+        assert!(!scene_spawner.instance_is_ready(instance));
+        assert!(scene_spawner.instance_parents.is_empty());
+    }
+
+    #[test]
+    fn unregistered_instance_is_not_spawned() {
+        let mut app = setup();
+        let scene = build_scene(&mut app);
+
+        let parent = app.world_mut().spawn_empty().id();
+        let mut scene_spawner = app.world_mut().resource_mut::<SceneSpawner>();
+        let instance = scene_spawner.spawn_as_child(scene, parent);
+        scene_spawner.unregister_instance(instance);
+        app.update();
+
+        assert!(!app
+            .world()
+            .resource::<SceneSpawner>()
+            .instance_is_ready(instance));
+        let mut components = app.world_mut().query::<&ComponentF>();
+        assert_eq!(components.iter(app.world()).count(), 2);
     }
 
     #[test]
