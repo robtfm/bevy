@@ -1,5 +1,5 @@
 use crate::components::{GlobalTransform, Transform, TransformTreeChanged};
-use bevy_ecs::prelude::*;
+use bevy_ecs::{prelude::*, system::SystemChangeTick};
 #[cfg(feature = "std")]
 pub use parallel::propagate_parent_transforms;
 #[cfg(not(feature = "std"))]
@@ -50,13 +50,18 @@ pub fn mark_dirty_trees(
     >,
     mut orphaned: RemovedComponents<ChildOf>,
     mut transforms: Query<(Option<&ChildOf>, &mut TransformTreeChanged)>,
+    ticks: SystemChangeTick,
 ) {
+    let this_run = ticks.this_run();
     for entity in changed_transforms.iter().chain(orphaned.read()) {
         let mut next = entity;
         while let Ok((child_of, mut tree)) = transforms.get_mut(next) {
-            if tree.is_changed() && !tree.is_added() {
-                // If the component was changed, this part of the tree has already been processed.
-                // Ignore this if the change was caused by the component being added.
+            if tree.last_changed() == this_run {
+                // Marked earlier in this run, so this part of the tree has already been processed.
+                // Keyed on this run's tick rather than `is_changed()`: a mark newer than the last
+                // run may come from another instance of this system (a second propagation pass in
+                // the same frame), whose walk stops at *our* marks in turn, so neither reliably
+                // reaches the root and a subtree changed between the passes is never propagated.
                 break;
             }
             tree.set_changed();
