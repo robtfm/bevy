@@ -148,6 +148,10 @@ pub enum DepthOfFieldMode {
     /// If targeting native platforms, consider using [`DepthOfFieldMode::Bokeh`] instead.
     #[default]
     Gaussian,
+
+    /// No blur, but depth of field stays active: the transparent focus
+    /// texture is still rendered for other effects that read it.
+    Disabled,
 }
 
 /// Data about the depth of field effect that's uploaded to the GPU.
@@ -601,7 +605,7 @@ pub fn prepare_depth_of_field_view_bind_group_layouts(
         // If needed, create the bind group layout for the second bokeh pass,
         // which takes two inputs. We only need to do this if bokeh is in use.
         let dual_input = match depth_of_field.mode {
-            DepthOfFieldMode::Gaussian => None,
+            DepthOfFieldMode::Gaussian | DepthOfFieldMode::Disabled => None,
             DepthOfFieldMode::Bokeh => Some(render_device.create_bind_group_layout(
                 Some("depth of field bind group layout (dual input)"),
                 &BindGroupLayoutEntries::sequential(
@@ -767,6 +771,10 @@ pub fn prepare_depth_of_field_pipelines(
 
         // Go ahead and specialize the pipelines.
         match depth_of_field.mode {
+            // no pipelines: the node skips views without them
+            DepthOfFieldMode::Disabled => {
+                commands.entity(entity).remove::<DepthOfFieldPipelines>();
+            }
             DepthOfFieldMode::Gaussian => {
                 commands
                     .entity(entity)
