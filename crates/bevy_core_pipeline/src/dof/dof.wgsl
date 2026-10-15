@@ -128,6 +128,11 @@ const SIN_NEG_FRAC_PI_5_6: f32 = -0.5;
 //
 // [circle of confusion]: https://en.wikipedia.org/wiki/Circle_of_confusion
 fn calculate_circle_of_confusion(in_frag_coord: vec4<f32>) -> f32 {
+    return circle_of_confusion_at(vec2<i32>(floor(in_frag_coord.xy)));
+}
+
+// The circle of confusion diameter of the pixel at `frag_coord`.
+fn circle_of_confusion_at(frag_coord: vec2<i32>) -> f32 {
     // Unpack the depth of field parameters.
     let focus = dof_params.focal_distance;
     let f = dof_params.focal_length;
@@ -140,16 +145,7 @@ fn calculate_circle_of_confusion(in_frag_coord: vec4<f32>) -> f32 {
     // so that a cleared depth of 0.0 (infinitely far away under reverse-z, and
     // max_depth defaults to infinity) can't produce an infinity that would
     // poison the blend.
-    let frag_coord = vec2<i32>(floor(in_frag_coord.xy));
-    let raw_depth = textureLoad(depth_texture, frag_coord, 0);
-    let opaque_depth = min(min(-depth_ndc_to_view_z(raw_depth), dof_params.max_depth), 3.4e37);
-
-    // Blend in the view depth of transparent surfaces, weighted by how much
-    // they cover this pixel, so that they attract focus in proportion to
-    // their opacity.
-    let focus_sample = textureLoad(focus_texture, frag_coord, 0);
-    let coverage = clamp(focus_sample.g, 0.0, 1.0);
-    let blended_depth = focus_sample.r + (1.0 - coverage) * opaque_depth;
+    let blended_depth = blended_view_depth(frag_coord);
 
     let depth = clamp(blended_depth, focus, dof_params.max_depth);
 
@@ -162,6 +158,28 @@ fn calculate_circle_of_confusion(in_frag_coord: vec4<f32>) -> f32 {
 
     let framebuffer_size = vec2<f32>(textureDimensions(color_texture_a));
     return clamp(candidate_coc * framebuffer_size.y, 0.0, max_coc_diameter);
+}
+
+// The view depth of a pixel as the circle of confusion sees it: the opaque
+// depth with the depth of the transparent surfaces blended in, weighted by how
+// much they cover the pixel, so that they attract focus in proportion to their
+// opacity.
+fn blended_view_depth(frag_coord: vec2<i32>) -> f32 {
+    let raw_depth = textureLoad(depth_texture, frag_coord, 0);
+    let opaque_depth = min(min(-depth_ndc_to_view_z(raw_depth), dof_params.max_depth), 3.4e37);
+    let focus_sample = textureLoad(focus_texture, frag_coord, 0);
+    let coverage = clamp(focus_sample.g, 0.0, 1.0);
+    return focus_sample.r + (1.0 - coverage) * opaque_depth;
+}
+
+// How much a blur sample at `sample_coord` may contribute to a fragment whose
+// circle of confusion is `coc`: a sample that is markedly sharper than the
+// fragment is another surface closer to focus, and must not be smeared across
+// the blur behind it. Full weight for a sample as blurred as the fragment,
+// none for one less than half as blurred.
+fn sharper_sample_rejection(sample_coord: vec2<f32>, coc: f32) -> f32 {
+    let sample_coc = circle_of_confusion_at(vec2<i32>(floor(sample_coord)));
+    return smoothstep(0.5, 1.0, sample_coc / max(coc, 1e-3));
 }
 
 // Performs a single direction of the separable Gaussian blur kernel.
@@ -214,14 +232,15 @@ fn gaussian_blur(frag_coord: vec4<f32>, coc: f32, frag_offset: vec2<f32>) -> vec
         // effectively evaluate w₀⋅c₀ + w₁⋅c₁ with a single texture lookup.
         let w0 = exp(exp_factor * f32(i) * f32(i));
         let w1 = exp(exp_factor * f32(i + 1) * f32(i + 1));
+        let sample_offset = frag_offset * (f32(i) + w1 / (w0 + w1));
         let uv_offset = offset * (f32(i) + w1 / (w0 + w1));
         let weight = w0 + w1;
 
-        sum += (
-            textureSampleLevel(color_texture_a, color_texture_sampler, uv + uv_offset, 0.0) +
-            textureSampleLevel(color_texture_a, color_texture_sampler, uv - uv_offset, 0.0)
-        ) * weight;
-        weight_sum += weight * 2.0;
+        let weight_plus = weight * sharper_sample_rejection(frag_coord.xy + sample_offset, coc);
+        let weight_minus = weight * sharper_sample_rejection(frag_coord.xy - sample_offset, coc);
+        sum += textureSampleLevel(color_texture_a, color_texture_sampler, uv + uv_offset, 0.0) * weight_plus
+            + textureSampleLevel(color_texture_a, color_texture_sampler, uv - uv_offset, 0.0) * weight_minus;
+        weight_sum += weight_plus + weight_minus;
     }
 
     return vec4(sum / weight_sum);
@@ -244,12 +263,15 @@ fn box_blur_a(frag_coord: vec4<f32>, coc: f32, frag_offset: vec2<f32>) -> vec4<f
 
     // Accumulate samples in a single direction.
     var sum = vec3(0.0);
+    var weight_sum = 0.0;
     for (var i = 0; i <= support; i += 1) {
+        let weight = sharper_sample_rejection(frag_coord.xy + frag_offset * f32(i), coc);
         sum += textureSampleLevel(
-            color_texture_a, color_texture_sampler, uv + offset * f32(i), 0.0).rgb;
+            color_texture_a, color_texture_sampler, uv + offset * f32(i), 0.0).rgb * weight;
+        weight_sum += weight;
     }
 
-    return vec4(sum / vec3(1.0 + f32(support)), 1.0);
+    return vec4(sum / vec3(weight_sum), 1.0);
 }
 
 // Performs a box blur in a single direction, sampling `color_texture_b`.
@@ -270,12 +292,15 @@ fn box_blur_b(frag_coord: vec4<f32>, coc: f32, frag_offset: vec2<f32>) -> vec4<f
 
     // Accumulate samples in a single direction.
     var sum = vec3(0.0);
+    var weight_sum = 0.0;
     for (var i = 0; i <= support; i += 1) {
+        let weight = sharper_sample_rejection(frag_coord.xy + frag_offset * f32(i), coc);
         sum += textureSampleLevel(
-            color_texture_b, color_texture_sampler, uv + offset * f32(i), 0.0).rgb;
+            color_texture_b, color_texture_sampler, uv + offset * f32(i), 0.0).rgb * weight;
+        weight_sum += weight;
     }
 
-    return vec4(sum / vec3(1.0 + f32(support)), 1.0);
+    return vec4(sum / vec3(weight_sum), 1.0);
 }
 #endif
 
