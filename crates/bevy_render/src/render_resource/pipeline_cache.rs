@@ -1188,8 +1188,14 @@ fn create_pipeline_task(
             Err(err) => CachedPipelineState::Err(err),
         },
         PipelineCompilationMode::Async | PipelineCompilationMode::AsyncWithHandler(_) => {
+            #[cfg(all(not(target_arch = "wasm32"), feature = "multi_threaded"))]
+            let task = bevy_tasks::AsyncComputeTaskPool::get().spawn(task);
+            // The task is not `Send` here (wgpu's objects are tied to this thread): it runs on
+            // this thread, and on the web ahead of the first use through `sync_task`.
+            #[cfg(not(all(not(target_arch = "wasm32"), feature = "multi_threaded")))]
+            let task = bevy_tasks::AsyncComputeTaskPool::get().spawn_local(task);
             return CachedPipelineState::Creating(
-                bevy_tasks::AsyncComputeTaskPool::get().spawn(task),
+                task,
                 #[cfg(not(all(not(target_arch = "wasm32"), feature = "multi_threaded")))]
                 Box::new(sync_task),
             );

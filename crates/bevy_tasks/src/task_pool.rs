@@ -6,7 +6,11 @@ use std::{
 };
 
 #[cfg(all(target_arch = "wasm32", feature = "web"))]
-use core::{cell::Cell, pin::Pin};
+use core::{
+    cell::Cell,
+    pin::Pin,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 use crate::executor::FallibleTask;
 use bevy_platform::sync::Arc;
@@ -151,6 +155,10 @@ pub struct TaskPool {
     /// their event loop) to the JS event loop of the thread the pool was created on.
     #[cfg(all(target_arch = "wasm32", feature = "web"))]
     js_thread: JsThread,
+    /// How many threads have joined through [`TaskPool::run_worker`], for
+    /// [`TaskPool::spawn_on_workers`].
+    #[cfg(all(target_arch = "wasm32", feature = "web"))]
+    joined: AtomicUsize,
 }
 
 #[cfg(all(target_arch = "wasm32", feature = "web"))]
@@ -308,6 +316,8 @@ impl TaskPool {
             },
             #[cfg(all(target_arch = "wasm32", feature = "web"))]
             js_thread,
+            #[cfg(all(target_arch = "wasm32", feature = "web"))]
+            joined: AtomicUsize::new(0),
         }
     }
 
@@ -322,6 +332,8 @@ impl TaskPool {
     pub fn run_worker(&self) {
         #[cfg(feature = "web")]
         POOL_WORKER.with(|flag| flag.set(true));
+        #[cfg(feature = "web")]
+        self.joined.fetch_add(1, Ordering::Release);
         run_worker_thread(
             &self.executor,
             &self.worker.shutdown_rx,
@@ -702,6 +714,25 @@ impl TaskPool {
                 .unbounded_send(RemoteFuture(Box::pin(driver)));
             task
         }
+    }
+
+    /// Spawns a static future onto the threads that joined the pool through
+    /// [`TaskPool::run_worker`], as [`TaskPool::spawn`] does off the web; until one has joined
+    /// it runs on the JS event loop like [`TaskPool::spawn`]'s.
+    #[cfg(all(target_arch = "wasm32", feature = "web"))]
+    pub(crate) fn spawn_on_workers<T>(
+        &self,
+        future: impl Future<Output = T> + Send + 'static,
+    ) -> Task<T>
+    where
+        T: Send + 'static,
+    {
+        if self.joined.load(Ordering::Acquire) == 0 {
+            return self.spawn(future);
+        }
+        let (task, driver) = Task::split(future);
+        self.executor.spawn(driver).detach();
+        task
     }
 
     /// Spawns a static future on the thread-local async executor for the

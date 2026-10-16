@@ -25,7 +25,7 @@ use bevy_ecs::{
 use bevy_image::{Image, TextureFormatPixelInfo};
 use bevy_platform::collections::HashSet;
 use bevy_reflect::Reflect;
-use bevy_tasks::AsyncComputeTaskPool;
+use bevy_tasks::IoTaskPool;
 use bevy_utils::default;
 use bevy_window::{PrimaryWindow, WindowRef};
 use core::ops::Deref;
@@ -689,6 +689,6 @@ pub(crate) fn collect_screenshots(world: &mut World) {
             }
         };
 
-        AsyncComputeTaskPool::get().spawn(finish).detach();
+        IoTaskPool::get().spawn(finish).detach();
     }
 }

@@ -67,6 +67,31 @@ taskpool! {
     (ASYNC_COMPUTE_TASK_POOL, AsyncComputeTaskPool)
 }
 
+#[cfg(all(
+    target_arch = "wasm32",
+    feature = "web",
+    feature = "web-worker",
+    feature = "multi_threaded"
+))]
+impl AsyncComputeTaskPool {
+    /// Spawns a static future onto the pool's threads, as [`TaskPool::spawn`] does off the web.
+    ///
+    /// On the web [`TaskPool::spawn`] runs futures on the JS event loop; this pool instead hands
+    /// a `Send` future to the threads that joined it through [`TaskPool::run_worker`], keeping
+    /// its work off the spawning thread. Until a thread has joined it runs on the JS event loop
+    /// like [`TaskPool::spawn`]'s. A future that is not `Send` goes through
+    /// [`TaskPool::spawn_local`].
+    pub fn spawn<T>(
+        &self,
+        future: impl core::future::Future<Output = T> + Send + 'static,
+    ) -> crate::Task<T>
+    where
+        T: Send + 'static,
+    {
+        self.0.spawn_on_workers(future)
+    }
+}
+
 taskpool! {
     /// A newtype for a task pool for IO-intensive work (i.e. tasks that spend very little time in a
     /// "woken" state)

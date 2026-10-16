@@ -3,11 +3,13 @@
 //! [`start`] takes the page's canvas and spawns the workers the engine runs on: the render
 //! worker, which owns the canvas as an `OffscreenCanvas`, the wgpu device and the render world
 //! ([`bevy_render::web_worker`]); the compute workers, which join the
-//! [`ComputeTaskPool`](bevy_tasks::ComputeTaskPool); and the engine worker, which runs the app
-//! world and winit's event loop, with input forwarded from the page. Every worker runs the same
-//! script, shipped with this module, which instantiates the wasm module over the page's shared
-//! memory and then calls this module's entry for its role. The app supplies one export, the
-//! engine worker's, which builds the app with
+//! [`ComputeTaskPool`](bevy_tasks::ComputeTaskPool); the async compute workers, which join the
+//! [`AsyncComputeTaskPool`](bevy_tasks::AsyncComputeTaskPool) (whose
+//! [`spawn`](bevy_tasks::AsyncComputeTaskPool::spawn) runs futures there); and the engine worker,
+//! which runs the app world and winit's event loop, with input forwarded from the page. Every
+//! worker runs the same script, shipped with this module, which instantiates the wasm module
+//! over the page's shared memory and then calls this module's entry for its role. The app
+//! supplies one export, the engine worker's, which builds the app with
 //! [`RenderCreation::WebWorker`](bevy_render::settings::RenderCreation::WebWorker) and a compute
 //! pool of [`compute_threads`] threads and runs it; `App::run` then has `finish` and `cleanup`
 //! executed on the render worker before the app runs. Optionally the app supplies a render
@@ -22,7 +24,7 @@
 //! gets a same-named function that relays the call to the page's global and resolves with the
 //! result; a function returning a value must be `async` or return a `js_sys::Promise`, which the
 //! attribute checks. Worker console output is mirrored to the page. Once a worker's last entry
-//! has returned it posts `{ __bevy_ready: tag }` to the page (compute workers never return), or
+//! has returned it posts `{ __bevy_ready: tag }` to the page (pool workers never return), or
 //! `{ __bevy_ready: tag, error }` if an entry failed. [`spawn_worker`] spawns further workers of
 //! the app's own on the same terms.
 
@@ -59,10 +61,14 @@ pub struct WebWorkerConfig {
     pub render_setup: Option<String>,
     /// How many compute workers to spawn.
     pub compute_threads: u32,
+    /// How many async compute workers to spawn.
+    pub async_compute_threads: u32,
     /// The render worker's wasm stack size in bytes; `None` takes the module's default.
     pub render_stack_size: Option<u32>,
     /// The compute workers' wasm stack size in bytes; `None` takes the module's default.
     pub compute_stack_size: Option<u32>,
+    /// The async compute workers' wasm stack size in bytes; `None` takes the module's default.
+    pub async_compute_stack_size: Option<u32>,
     /// The engine worker's wasm stack size in bytes; `None` takes the module's default.
     pub engine_stack_size: Option<u32>,
 }
@@ -88,6 +94,8 @@ pub struct WebWorkers {
     pub render: Worker,
     /// The compute workers.
     pub compute: Vec<Worker>,
+    /// The async compute workers.
+    pub async_compute: Vec<Worker>,
     /// The engine worker.
     pub engine: Worker,
 }
@@ -130,7 +138,8 @@ pub fn start_render(
     Ok(RenderWorker { worker, worker_id })
 }
 
-/// Page side: spawns the compute and engine workers for a render worker from [`start_render`].
+/// Page side: spawns the compute, async compute and engine workers for a render worker from
+/// [`start_render`].
 pub fn start_with_render(
     render: RenderWorker,
     config: &WebWorkerConfig,
@@ -146,6 +155,17 @@ pub fn start_with_render(
                 &[(COMPUTE_ENTRY, Vec::new())],
                 &format!("compute-{i}"),
                 config.compute_stack_size,
+                &[],
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let async_compute = (0..config.async_compute_threads)
+        .map(|i| {
+            spawn(
+                &config.glue_url,
+                &[(ASYNC_COMPUTE_ENTRY, Vec::new())],
+                &format!("async-{i}"),
+                config.async_compute_stack_size,
                 &[],
             )
         })
@@ -166,6 +186,7 @@ pub fn start_with_render(
     Ok(WebWorkers {
         render,
         compute,
+        async_compute,
         engine,
     })
 }
@@ -213,6 +234,7 @@ fn spawn(
 
 const RENDER_ENTRY: &str = "__bevy_render_worker_main";
 const COMPUTE_ENTRY: &str = "__bevy_compute_worker_main";
+const ASYNC_COMPUTE_ENTRY: &str = "__bevy_async_compute_worker_main";
 const ATTACH_ENTRY: &str = "__bevy_attach_engine_worker";
 
 static COMPUTE_THREADS: AtomicU32 = AtomicU32::new(0);
@@ -234,7 +256,13 @@ pub async fn render_worker_entry(canvas: OffscreenCanvas) -> Result<(), JsValue>
 #[doc(hidden)]
 #[wasm_bindgen(js_name = "__bevy_compute_worker_main")]
 pub fn compute_worker_entry() {
-    compute_worker_main();
+    join_pool(bevy_tasks::ComputeTaskPool::try_get);
+}
+
+#[doc(hidden)]
+#[wasm_bindgen(js_name = "__bevy_async_compute_worker_main")]
+pub fn async_compute_worker_entry() {
+    join_pool(bevy_tasks::AsyncComputeTaskPool::try_get);
 }
 
 #[doc(hidden)]
@@ -252,11 +280,13 @@ fn attach_engine_worker(worker_id: u32) -> Result<(), JsValue> {
     bevy_winit::attach_worker(worker_id, OffscreenCanvas::new(1, 1)?)
 }
 
-/// Compute worker side: joins the engine's [`ComputeTaskPool`](bevy_tasks::ComputeTaskPool)
-/// once the engine worker has built it, and never returns.
-fn compute_worker_main() {
+/// Pool worker side: joins the engine's pool once the engine worker has built it, and never
+/// returns.
+fn join_pool<P: core::ops::Deref<Target = bevy_tasks::TaskPool>>(
+    try_get: fn() -> Option<&'static P>,
+) {
     let pool = loop {
-        if let Some(pool) = bevy_tasks::ComputeTaskPool::try_get() {
+        if let Some(pool) = try_get() {
             break pool;
         }
         bevy_platform::thread::sleep(core::time::Duration::from_millis(5));
