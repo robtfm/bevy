@@ -296,8 +296,37 @@ impl GlobalTransform {
     /// resulting [`GlobalTransform`]
     #[inline]
     pub fn mul_transform(&self, transform: Transform) -> Self {
-        Self(self.0 * transform.compute_affine())
+        Self(self.0 * sanitized_affine(&transform))
     }
+}
+
+/// The affine of a [`Transform`] with degenerate parts made safe: a zero scale component
+/// becomes `f32::EPSILON` (a zero makes the affine singular, and decomposing a singular affine
+/// yields NaN), and non-finite parts fall back to identity. Only the derived
+/// [`GlobalTransform`] is affected; the [`Transform`] itself keeps the exact values it was
+/// given so they can be read back.
+#[inline]
+fn sanitized_affine(transform: &Transform) -> Affine3A {
+    let scale = if transform.scale.is_finite() {
+        Vec3::select(
+            transform.scale.cmpeq(Vec3::ZERO),
+            Vec3::splat(f32::EPSILON),
+            transform.scale,
+        )
+    } else {
+        Vec3::ONE
+    };
+    let rotation = if transform.rotation.is_finite() {
+        transform.rotation
+    } else {
+        Quat::IDENTITY
+    };
+    let translation = if transform.translation.is_finite() {
+        transform.translation
+    } else {
+        Vec3::ZERO
+    };
+    Affine3A::from_scale_rotation_translation(scale, rotation, translation)
 }
 
 impl Default for GlobalTransform {
@@ -308,7 +337,7 @@ impl Default for GlobalTransform {
 
 impl From<Transform> for GlobalTransform {
     fn from(transform: Transform) -> Self {
-        Self(transform.compute_affine())
+        Self(sanitized_affine(&transform))
     }
 }
 
