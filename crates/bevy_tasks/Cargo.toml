@@ -39,6 +39,8 @@ web = [
   "dep:wasm-bindgen-futures",
   "dep:pin-project",
   "dep:futures-channel",
+  "dep:futures-util",
+  "dep:tracing",
 ]
 
 ## The app runs on a web worker over shared memory (the `atomics` target feature):
@@ -72,6 +74,8 @@ crossbeam-queue = { version = "0.3", default-features = false, features = [
 wasm-bindgen-futures = { version = "0.4", optional = true }
 pin-project = { version = "1", optional = true }
 futures-channel = { version = "0.3", optional = true }
+futures-util = { version = "0.3", default-features = false, features = ["alloc"], optional = true }
+tracing = { version = "0.1", default-features = false, optional = true }
 
 [target.'cfg(not(all(target_has_atomic = "8", target_has_atomic = "16", target_has_atomic = "32", target_has_atomic = "64", target_has_atomic = "ptr")))'.dependencies]
 async-task = { version = "4.4.0", default-features = false, features = [
