@@ -36,7 +36,7 @@ use info::*;
 use loaders::*;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 #[cfg(all(feature = "wasm_threaded_loader", target_arch = "wasm32"))]
 use spin::{RwLock, RwLockWriteGuard};
@@ -86,7 +86,7 @@ pub(crate) struct WasmThreadLoadAssetRequest {
     loader: Arc<dyn ErasedAssetLoader>,
     load_dependencies: bool,
     populate_hashes: bool,
-    sender: futures_channel::mpsc::UnboundedSender<
+    sender: futures_channel::oneshot::Sender<
         Result<
             (
                 ErasedLoadedAsset,
@@ -108,7 +108,9 @@ pub fn init_thread_loader() -> super::WasmLoaderHandle {
 }
 
 #[cfg(all(feature = "wasm_threaded_loader", target_arch = "wasm32"))]
-async fn thread_loader(mut rx: futures_channel::mpsc::UnboundedReceiver<WasmThreadLoadAssetRequest>) {
+async fn thread_loader(
+    mut rx: futures_channel::mpsc::UnboundedReceiver<WasmThreadLoadAssetRequest>,
+) {
     while let Some(thread_load_request) = rx.next().await {
         wasm_bindgen_futures::spawn_local(wasm_thread_handle_load_request(thread_load_request));
     }
@@ -123,43 +125,32 @@ async fn wasm_thread_handle_load_request(request: WasmThreadLoadAssetRequest) {
         loader,
         load_dependencies,
         populate_hashes,
-        sender,
+        mut sender,
     } = request;
 
-    // The load itself. Borrows `asset_server`, `asset_path`.
-    let work = asset_server.load_with_meta_and_loader_internal(
-        &asset_path,
-        meta,
-        loader,
-        load_dependencies,
-        populate_hashes,
-    );
-
-    // Poll every 2s for handle liveness via `AssetInfos::path_to_id`. When the last
-    // strong handle for `asset_path` is dropped, `process_handle_drop_internal`
-    // removes the entry from `path_to_id`, and this branch returns. `FutureExt::or`
-    // then drops `work`, which drops the in-flight reqwest fetch (firing its
-    // `AbortGuard`) and releases any IPFS semaphore permit it was holding.
-    let cancel = async {
-        loop {
-            gloo_timers::future::sleep(core::time::Duration::from_secs(2)).await;
-            if !asset_server
-                .data
-                .infos
-                .read()
-                .path_to_id
-                .contains_key(&asset_path)
-            {
-                debug!("wasm asset thread loader: cancelling in-flight load for `{asset_path}` (no strong handles remain)");
-                return Err(AssetLoadError::LoadCancelled {
-                    path: asset_path.clone(),
-                });
-            }
-        }
+    let work = async {
+        Some(
+            asset_server
+                .load_with_meta_and_loader_internal(
+                    &asset_path,
+                    meta,
+                    loader,
+                    load_dependencies,
+                    populate_hashes,
+                )
+                .await,
+        )
     };
-
-    let result = work.or(cancel).await;
-    let _ = sender.unbounded_send(result);
+    // The requesting task was cancelled (its last strong handle dropped): nobody wants the
+    // result. Dropping `work` with it drops the in-flight fetch and releases its request slot.
+    let cancelled = async {
+        sender.cancellation().await;
+        None
+    };
+    let result = work.or(cancelled).await;
+    if let Some(result) = result {
+        let _ = sender.send(result);
+    }
 }
 
 /// The "asset mode" the server is currently in.
@@ -629,29 +620,28 @@ impl AssetServer {
         guard: G,
     ) {
         // drop the lock on `AssetInfos` before spawning a task that may block on it in single-threaded
-        #[cfg(any(target_arch = "wasm32", not(feature = "multi_threaded")))]
+        #[cfg(not(feature = "multi_threaded"))]
         drop(infos);
 
         let owned_handle = handle.clone();
         let server = self.clone();
         let task = IoTaskPool::get().spawn(async move {
-            match server
+            if let Err(err) = server
                 .load_internal(Some(owned_handle), path, false, None)
                 .await
             {
-                Ok(_) | Err(AssetLoadError::LoadCancelled { .. }) => {}
-                Err(err) => error!("{}", err),
+                error!("{}", err);
             }
             drop(guard);
         });
 
-        #[cfg(not(any(target_arch = "wasm32", not(feature = "multi_threaded"))))]
+        #[cfg(feature = "multi_threaded")]
         {
             let mut infos = infos;
             infos.pending_tasks.insert(handle.id(), task);
         }
 
-        #[cfg(any(target_arch = "wasm32", not(feature = "multi_threaded")))]
+        #[cfg(not(feature = "multi_threaded"))]
         task.detach();
     }
 
@@ -687,7 +677,7 @@ impl AssetServer {
         );
 
         // drop the lock on `AssetInfos` before spawning a task that may block on it in single-threaded
-        #[cfg(any(target_arch = "wasm32", not(feature = "multi_threaded")))]
+        #[cfg(not(feature = "multi_threaded"))]
         drop(infos);
 
         if !should_load {
@@ -715,10 +705,10 @@ impl AssetServer {
             }
         });
 
-        #[cfg(not(any(target_arch = "wasm32", not(feature = "multi_threaded"))))]
+        #[cfg(feature = "multi_threaded")]
         infos.pending_tasks.insert(handle.id().untyped(), task);
 
-        #[cfg(any(target_arch = "wasm32", not(feature = "multi_threaded")))]
+        #[cfg(not(feature = "multi_threaded"))]
         task.detach();
 
         handle
@@ -999,7 +989,7 @@ impl AssetServer {
             infos.create_loading_handle_untyped(TypeId::of::<A>(), core::any::type_name::<A>());
 
         // drop the lock on `AssetInfos` before spawning a task that may block on it in single-threaded
-        #[cfg(any(target_arch = "wasm32", not(feature = "multi_threaded")))]
+        #[cfg(not(feature = "multi_threaded"))]
         drop(infos);
 
         let id = handle.id();
@@ -1030,10 +1020,10 @@ impl AssetServer {
             }
         });
 
-        #[cfg(not(any(target_arch = "wasm32", not(feature = "multi_threaded"))))]
+        #[cfg(feature = "multi_threaded")]
         infos.pending_tasks.insert(id, task);
 
-        #[cfg(any(target_arch = "wasm32", not(feature = "multi_threaded")))]
+        #[cfg(not(feature = "multi_threaded"))]
         task.detach();
 
         handle.typed_debug_checked()
@@ -1531,7 +1521,7 @@ impl AssetServer {
         AssetLoadError,
     > {
         if let Some(wasm_loader_handle) = self.data.wasm_loader_handle.as_ref() {
-            let (sender, mut receiver) = futures_channel::mpsc::unbounded();
+            let (sender, receiver) = futures_channel::oneshot::channel();
             let asset_server = self.clone();
             let asset_path = asset_path.clone().into_owned();
             wasm_loader_handle
@@ -1546,7 +1536,7 @@ impl AssetServer {
                     sender,
                 })
                 .unwrap_or_else(|_| panic!("asset load request channel closed"));
-            receiver.next().await.unwrap()
+            receiver.await.unwrap()
         } else {
             self.load_with_meta_and_loader_internal(
                 asset_path,
@@ -1945,7 +1935,7 @@ pub fn handle_internal_asset_events(world: &mut World) {
             server.reload(path);
         }
 
-        #[cfg(not(any(target_arch = "wasm32", not(feature = "multi_threaded"))))]
+        #[cfg(feature = "multi_threaded")]
         infos
             .pending_tasks
             .retain(|_, load_task| !load_task.is_finished());
@@ -2141,9 +2131,6 @@ pub enum AssetLoadError {
     },
     #[error("An error occurred in the wasm asset loading thread")]
     WasmThreadLoaderError,
-    #[error("Load of asset '{path}' was cancelled because no strong handles remain")]
-    #[from(ignore)]
-    LoadCancelled { path: AssetPath<'static> },
 }
 
 /// An error that can occur during asset loading.
